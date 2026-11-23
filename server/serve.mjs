@@ -3,12 +3,12 @@ import { readFile } from "node:fs/promises";
 import { InputError, indexStatus, search } from "./search.mjs";
 
 const assets = new Map([
-  ["/", ["index.html", "text/html"]],
-  ["/app.css", ["app.css", "text/css"]],
-  ["/search.svg", ["search.svg", "image/svg+xml"]],
-  ["/app.js", ["app.js", "text/javascript"]],
+  ["/", ["public/index.html", "text/html"]],
+  ["/app.css", ["dist/app.css", "text/css"]],
+  ["/search.svg", ["public/search.svg", "image/svg+xml"]],
+  ["/app.js", ["dist/app.js", "text/javascript"]],
 ]);
-const publicRoot = new URL("../public/", import.meta.url);
+const packageRoot = new URL("../", import.meta.url);
 
 function json(res, code, data) {
   res.writeHead(code, { "Content-Type": "application/json; charset=utf-8" });
@@ -58,7 +58,7 @@ export function createServer() {
       }
       const asset = assets.get(pathname);
       if (req.method === "GET" && asset) {
-        const data = await readFile(new URL(asset[0], publicRoot));
+        const data = await readFile(new URL(asset[0], packageRoot));
         res.writeHead(200, { "Content-Type": asset[1] + "; charset=utf-8" });
         return res.end(data);
       }

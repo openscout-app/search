@@ -98,3 +98,18 @@ test("accepts only local API traffic and bounded queries", async () => {
   assert.equal((await fetch(url + "/api/identity")).status, 200);
   assert.match(await (await fetch(url)).text(), /Scout Search/);
 });
+
+test("serves the built Search controls and theme from the same local origin", async () => {
+  const page = await fetch(url);
+  const html = await page.text();
+  for (const [path, mime, marker] of [
+    ["/app.js", "text/javascript", "Copy reference"],
+    ["/app.css", "text/css", "--hud-ink"],
+  ]) {
+    assert.ok(html.includes(path));
+    const asset = await fetch(url + path);
+    assert.equal(asset.status, 200);
+    assert.ok(asset.headers.get("content-type").startsWith(mime));
+    assert.ok((await asset.text()).includes(marker));
+  }
+});
