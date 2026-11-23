@@ -1,0 +1,16 @@
+{
+  "name": "@openscout/search",
+  "version": "0.1.0",
+  "description": "Find the session where your coding agents discussed a change, ran a command, or made a decision.",
+  "license": "Apache-2.0",
+  "repository": { "type": "git", "url": "git+https://github.com/openscout-app/search.git" },
+  "type": "module",
+  "bin": { "scout-search": "bin/scout-search.mjs" },
+  "files": ["bin", "server", "public", "vendor", "docs/search.png", "NOTICE", "README.md"],
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node bin/scout-search.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": { "@openscout/scout": "0.5.3" }
+}
