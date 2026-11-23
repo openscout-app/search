@@ -6,20 +6,11 @@ Find the session where you discussed a change, ran a command or made a decision.
 
 ## Run it
 
-From this checkout, with Node 20 or newer:
-
-~~~sh
-npm ci
-npm start
-~~~
-
-The launcher opens the app at http://127.0.0.1:4803. It reuses an existing Scout Search server or tries the next available port. Pass options with `npm start -- --no-open --port 4900`. Stop the server with Ctrl+C.
-
-With GitHub access to the repository, the same launcher runs directly:
-
 ~~~sh
 npx github:openscout-app/search
 ~~~
+
+With Node 20 or newer, this opens Scout Search at http://127.0.0.1:4803. The launcher reuses an existing Scout Search server or tries the next available port. Add `--no-open` to skip the browser or `--port 4900` to choose a port. Stop the server with Ctrl+C.
 
 ## Recent sessions
 
@@ -30,8 +21,8 @@ A recent search works with the local index off and the Scout runtime stopped. It
 Agents and shell scripts can use the same search:
 
 ~~~sh
-npm start -- query "export queue" --harness codex --hours 24
-node bin/scout-search.mjs query "export queue" --json
+npx github:openscout-app/search query "export queue" --harness codex --hours 24
+npx github:openscout-app/search query "export queue" --json
 ~~~
 
 JSON includes the search mode, coverage and hits. Each hit includes a passage and its source coordinates when available. Record numbers use Scout's zero-based convention.
@@ -45,9 +36,9 @@ Use **Local index** to search a window you have explicitly indexed. This mode us
 3. Select **Local index** in the browser, or pass `--mode index` to a terminal query.
 
 ~~~sh
-npm start -- status
-npm start -- index --hours 168 --harness claude
-npm start -- query "export queue" --mode index --hours 168 --harness claude
+npx github:openscout-app/search status
+npx github:openscout-app/search index --hours 168 --harness claude
+npx github:openscout-app/search query "export queue" --mode index --hours 168 --harness claude
 ~~~
 
 Opening the page and running a query leave the index setting and its coverage alone. Search reports when indexing is off, a window needs indexing, or the retained history is stale or bounded. Scout manages the index and its storage cap.
@@ -57,6 +48,7 @@ Opening the page and running a query leave the index setting and its coverage al
 ~~~sh
 npm ci
 npm test
+npm start
 ~~~
 
 The recent-session reader is built from the same public Scout release as the packaged CLI. To regenerate `vendor/recent.mjs`, run `scripts/build-reader.sh` with Bun 1.4.4. An optional path to an existing Scout Git checkout avoids a download. The script builds the pinned commit from Git objects.
