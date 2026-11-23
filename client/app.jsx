@@ -18,15 +18,27 @@ const modes = options([
 ]);
 const recentNote = "Recent search reads up to 80 transcript files on this host.";
 
-function sessionTime(value) {
-  const date = new Date(value),
-    now = new Date();
+function referenceFor(hit) {
+  const rows = [
+    ["Session", hit.session],
+    ["Transcript", hit.source],
+  ];
+  if (hit.records) {
+    const [first, last] = hit.records;
+    rows.push(first === last ? ["Record", String(first)] : ["Records", first + "\u2013" + last]);
+  }
+  return rows.filter(([, value]) => value).map(([label, value]) => ({ label, value }));
+}
+
+function formatUpdated(updatedAt) {
+  const date = new Date(updatedAt);
   if (!Number.isFinite(date.getTime())) return null;
+  const now = new Date();
   const today = date.toDateString() === now.toDateString();
-  return (
-    <time dateTime={date.toISOString()} title={date.toLocaleString()}>
-      {today ? "Today, " : ""}
-      {date.toLocaleString(undefined, {
+  return {
+    text:
+      (today ? "Today, " : "") +
+      date.toLocaleString(undefined, {
         ...(!today && {
           month: "short",
           day: "numeric",
@@ -34,46 +46,56 @@ function sessionTime(value) {
         }),
         hour: "numeric",
         minute: "2-digit",
-      })}
-    </time>
+      }),
+    dateTime: date.toISOString(),
+    title: date.toLocaleString(),
+  };
+}
+
+function SessionHeader({ hit, sessionName, stamp }) {
+  return (
+    <div className="context">
+      <h3>{hit.project || hit.session || hit.title}</h3>
+      <span>{harnessNames[hit.harness] || hit.harness}</span>
+      {stamp && (
+        <time dateTime={stamp.dateTime} title={stamp.title}>
+          {stamp.text}
+        </time>
+      )}
+      {sessionName ? <span className="session-name">{sessionName}</span> : null}
+    </div>
   );
 }
 
-function sessionGroups(hits) {
-  const sessions = new Map(),
-    projects = new Map();
+function buildGroups(hits) {
+  const grouped = new Map();
   for (const hit of hits) {
-    if (!sessions.has(hit.collection)) {
-      sessions.set(hit.collection, []);
-      projects.set(hit.project, (projects.get(hit.project) || 0) + 1);
-    }
-    sessions.get(hit.collection).push(hit);
+    if (!grouped.has(hit.collection)) grouped.set(hit.collection, []);
+    grouped.get(hit.collection).push(hit);
   }
-  return Array.from(sessions, ([id, matches]) => {
-    const first = matches[0];
+  const projects = new Map();
+  for (const list of grouped.values()) {
+    const project = list[0].project;
+    projects.set(project, (projects.get(project) || 0) + 1);
+  }
+  return [...grouped.entries()].map(([key, list], index) => {
+    const first = list[0];
+    const id = key == null || key === "" ? "group-" + index : String(key);
     return {
       id,
+      label: first.project || first.session || first.title || undefined,
       header: (
-        <div className="context">
-          <h3>{first.project || first.session || first.title}</h3>
-          <span>{harnessNames[first.harness] || first.harness}</span>
-          {first.updatedAt && sessionTime(first.updatedAt)}
-          {projects.get(first.project) > 1 && <span className="session-name">{first.session}</span>}
-        </div>
+        <SessionHeader
+          hit={first}
+          sessionName={projects.get(first.project) > 1 && first.session ? first.session : null}
+          stamp={first.updatedAt ? formatUpdated(first.updatedAt) : null}
+        />
       ),
-      passages: matches.map((hit, index) => {
-        const reference = [];
-        if (hit.session) reference.push({ label: "Session", value: hit.session });
-        if (hit.source) reference.push({ label: "Transcript", value: hit.source });
-        if (hit.records) {
-          const [start, end] = hit.records;
-          reference.push({
-            label: start === end ? "Record" : "Records",
-            value: start === end ? String(start) : start + "–" + end,
-          });
-        }
-        return { id: id + "-" + index, text: hit.excerpt || hit.title, reference };
-      }),
+      passages: list.map((hit, passageIndex) => ({
+        id: id + ":" + passageIndex,
+        text: hit.excerpt || hit.title || "",
+        reference: referenceFor(hit),
+      })),
     };
   });
 }
@@ -234,7 +256,7 @@ function App() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error);
       if (!controller.signal.aborted)
-        setView({ state: "ready", data, scope: nextScope, groups: sessionGroups(data.hits) });
+        setView({ state: "ready", data, scope: nextScope, groups: buildGroups(data.hits) });
     } catch (error) {
       if (!controller.signal.aborted) setView({ state: "error", message: error.message });
     }
@@ -298,6 +320,7 @@ function App() {
           <label className="filter compact-mode">
             Search in
             <HudSelect
+              id="compact-mode"
               value={scope.mode}
               options={modes}
               onChange={(e) => changeScope("mode", e.target.value)}
@@ -306,6 +329,9 @@ function App() {
           <label className="filter">
             Harness
             <HudSelect
+              id="harness"
+              name="harness"
+              form="search-form"
               value={scope.harness}
               options={harnesses}
               onChange={(e) => changeScope("harness", e.target.value)}
@@ -314,6 +340,9 @@ function App() {
           <label className="filter">
             Sessions updated
             <HudSelect
+              id="hours"
+              name="hours"
+              form="search-form"
               value={scope.hours}
               options={windows}
               onChange={(e) => changeScope("hours", e.target.value)}
@@ -327,6 +356,7 @@ function App() {
           <header className="query-head">
             <h1>Search sessions</h1>
             <form
+              id="search-form"
               ref={form}
               role="search"
               onSubmit={(e) => {
@@ -339,6 +369,7 @@ function App() {
                 <HudInput
                   ref={input}
                   id="query"
+                  name="q"
                   type="search"
                   aria-label="Search session transcripts"
                   required
@@ -358,7 +389,12 @@ function App() {
                 />
                 {!query && <kbd aria-hidden="true">/</kbd>}
                 <button type="submit" hidden aria-hidden="true" tabIndex={-1} />
-                <HudButton className="primary" variant="ghost" onClick={() => form.current.requestSubmit()}>
+                <HudButton
+                  tone="accent"
+                  className="primary"
+                  variant="ghost"
+                  onClick={() => form.current.requestSubmit()}
+                >
                   Search
                 </HudButton>
               </div>
