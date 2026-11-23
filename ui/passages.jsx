@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useId, useRef, useState } from "react";
 
 function highlightTerms(text, query) {
   const terms = query
@@ -16,6 +16,7 @@ function highlightTerms(text, query) {
 function SourceReference({ fields }) {
   const [state, setState] = useState("ready");
   const manual = useRef(null);
+  const copyHintId = useId();
   const reset = useRef(null);
   useEffect(() => () => clearTimeout(reset.current), []);
   useEffect(() => {
@@ -60,14 +61,20 @@ function SourceReference({ fields }) {
         {state === "copied" ? "Copied" : state === "manual" ? "Select reference" : "Copy reference"}
       </button>
       {state === "manual" && (
-        <textarea
-          className="sp-manual-copy"
-          ref={manual}
-          readOnly
-          value={text}
-          rows={fields.length}
-          aria-label="Source reference. Use your device’s copy command."
-        />
+        <>
+          <span id={copyHintId} role="status" className="sp-copy-hint">
+            Use your device’s Copy command to copy the selected reference.
+          </span>
+          <textarea
+            className="sp-manual-copy"
+            ref={manual}
+            readOnly
+            value={text}
+            rows={fields.length}
+            aria-label="Source reference"
+            aria-describedby={copyHintId}
+          />
+        </>
       )}
     </div>
   );
