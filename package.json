@@ -5,8 +5,13 @@
   "license": "Apache-2.0",
   "repository": { "type": "git", "url": "git+https://github.com/openscout-app/search.git" },
   "type": "module",
+  "exports": {
+    "./passages": { "types": "./ui/passages.d.ts", "import": "./ui/passages.jsx" },
+    "./passages.css": "./ui/passages.css",
+    "./package.json": "./package.json"
+  },
   "bin": { "scout-search": "bin/scout-search.mjs" },
-  "files": ["bin", "server", "public", "vendor", "docs/search.png", "NOTICE", "README.md"],
+  "files": ["bin", "server", "public", "ui", "vendor", "docs/search.png", "NOTICE", "README.md"],
   "engines": { "node": ">=20" },
   "scripts": {
     "start": "node bin/scout-search.mjs",
