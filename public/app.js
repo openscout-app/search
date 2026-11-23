@@ -58,13 +58,27 @@ function passage(hit, q) {
     const copy = element("button", "Copy reference", "copy");
     copy.type = "button";
     let reset;
+    let manual;
+    const text = reference.map(([label, value]) => label + "  " + value).join("\n");
     copy.addEventListener("click", async () => {
       clearTimeout(reset);
       try {
         await navigator.clipboard.writeText(reference.map(([label, value]) => label + "  " + value).join("\\n"));
         copy.textContent = "Copied";
         reset = setTimeout(() => { copy.textContent = "Copy reference"; }, 1500);
-      } catch { copy.textContent = "Select the reference to copy"; }
+      } catch {
+        if (!manual) {
+          manual = element("textarea", null, "manual-copy");
+          manual.readOnly = true;
+          manual.value = text;
+          manual.rows = reference.length;
+          manual.setAttribute("aria-label", "Source reference. Use your device’s copy command.");
+          source.append(manual);
+        }
+        manual.focus();
+        manual.select();
+        copy.textContent = "Select reference";
+      }
     });
     source.append(coords, copy);
   } else source.append("Source coordinates are unavailable for this passage.");
