@@ -2,7 +2,7 @@ const form = document.querySelector("#search-form");
 const input = document.querySelector("#query");
 const results = document.querySelector("#results");
 const heading = document.querySelector("#result-title");
-const count = document.querySelector("#result-count");
+const compactMode = document.querySelector("#compact-mode");
 const message = document.querySelector("#message");
 const scope = document.querySelector("#scope-note");
 const harnessName = { codex: "Codex", claude: "Claude Code", kimi: "Kimi" };
@@ -23,7 +23,7 @@ function highlight(parent, text, q) {
   const terms = q.trim().split(/\s+/u).filter(term => term.length > 1)
     .sort((a, b) => b.length - a.length).map(term => term.replace(/[.*+?^$()|[\]\\{}]/g, "\\$&"));
   if (!terms.length) return parent.append(text);
-  const pattern = new RegExp(terms.join("|"), "giu");
+  const pattern = new RegExp("(?:" + terms.join("|") + ")(?:\\s+(?:" + terms.join("|") + "))*", "giu");
   let pos = 0;
   for (const match of text.matchAll(pattern)) {
     parent.append(text.slice(pos, match.index), element("mark", match[0]));
@@ -35,24 +35,52 @@ function highlight(parent, text, q) {
 function passage(hit, q) {
   const detail = element("details");
   const summary = element("summary");
-  highlight(summary, hit.excerpt || hit.title, q);
+  const excerpt = element("span", null, "excerpt");
+  highlight(excerpt, hit.excerpt || hit.title, q);
+  summary.append(excerpt);
   const source = element("div", null, "source");
-  const list = element("dl");
+  const coords = element("div", null, "coords");
   const rows = [["Session", hit.session], ["Transcript", hit.source]];
-  if (hit.records) rows.push(["Records", hit.records[0] === hit.records[1] ? String(hit.records[0]) : hit.records.join("–")]);
-  const coords = rows.filter(([, value]) => value);
-  for (const [label, value] of coords) list.append(element("dt", label), element("dd", value));
-  source.append(list);
-  if (coords.length) {
+  if (hit.records) {
+    const [first, last] = hit.records;
+    rows.push(first === last ? ["Record", String(first)] : ["Records", first + "–" + last]);
+  }
+  const reference = rows.filter(([, value]) => value);
+  for (const [label, value] of reference) {
+    const part = element("span");
+    part.title = label + " · " + value;
+    if (label === "Transcript") part.className = "path";
+    if (label === "Session" || label === "Transcript") part.append(element("span", label + " ", "sr-only"), element("bdi", value));
+    else part.textContent = label.toLowerCase() + " " + value;
+    coords.append(part);
+  }
+  if (reference.length) {
     const copy = element("button", "Copy reference", "copy");
     copy.type = "button";
+    let reset;
+    let manual;
+    const text = reference.map(([label, value]) => label + "  " + value).join("\n");
     copy.addEventListener("click", async () => {
+      clearTimeout(reset);
       try {
-        await navigator.clipboard.writeText(coords.map(([label, value]) => label + "  " + value).join("\n"));
+        await navigator.clipboard.writeText(reference.map(([label, value]) => label + "  " + value).join("\\n"));
         copy.textContent = "Copied";
-      } catch { copy.textContent = "Select and copy the reference above"; }
+        reset = setTimeout(() => { copy.textContent = "Copy reference"; }, 1500);
+      } catch {
+        if (!manual) {
+          manual = element("textarea", null, "manual-copy");
+          manual.readOnly = true;
+          manual.value = text;
+          manual.rows = reference.length;
+          manual.setAttribute("aria-label", "Source reference. Use your device’s copy command.");
+          source.append(manual);
+        }
+        manual.focus();
+        manual.select();
+        copy.textContent = "Select reference";
+      }
     });
-    source.append(copy);
+    source.append(coords, copy);
   } else source.append("Source coordinates are unavailable for this passage.");
   detail.append(summary, source);
   return detail;
@@ -87,23 +115,39 @@ function show(result) {
     groups.get(key).push(hit);
   }
   const c = result.coverage;
-  let title = "Matching passages";
+  let title = result.hits.length + (result.hits.length === 1 ? " passage" : " passages") +
+    " in " + groups.size + (groups.size === 1 ? " session" : " sessions");
   if (c.kind === "index_off") title = "Local index is off";
   else if (c.kind === "empty_index" || c.kind === "not_warmed") title = "This window hasn’t been indexed";
   else if (!groups.size) title = "No matches in the searched history";
   heading.textContent = title;
-  count.textContent = groups.size ? result.hits.length + (result.hits.length === 1 ? " passage" : " passages") +
-    " in " + groups.size + (groups.size === 1 ? " session" : " sessions") : "";
+  message.classList.toggle("coverage", c.kind === "recent" || groups.size > 0);
+  message.classList.toggle("partial", Boolean(c.partial || c.stale || c.kind === "bounded"));
   message.textContent = describeCoverage(c);
   const block = document.createDocumentFragment();
+  const projects = new Map();
+  for (const [first] of groups.values()) projects.set(first.project, (projects.get(first.project) || 0) + 1);
   for (const hits of groups.values()) {
     const first = hits[0];
     const row = element("article", null, "group");
     const meta = element("div", null, "context");
     meta.append(element("h3", first.project || first.session || first.title),
       element("span", harnessName[first.harness] || first.harness));
-    if (first.updatedAt) meta.append(element("span", new Date(first.updatedAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })));
-    row.append(meta, ...hits.map(hit => passage(hit, result.q)));
+    if (first.updatedAt) {
+      const date = new Date(first.updatedAt);
+      const today = date.toDateString() === new Date().toDateString();
+      const stamp = element("time", date.toLocaleString(undefined, {
+        ...(!today && { month: "short", day: "numeric", ...(date.getFullYear() !== new Date().getFullYear() && { year: "numeric" }) }),
+        hour: "numeric", minute: "2-digit",
+      }));
+      stamp.dateTime = date.toISOString();
+      stamp.title = date.toLocaleString();
+      meta.append(stamp);
+    }
+    const passages = element("div");
+    if (projects.get(first.project) > 1 && first.session) passages.append(element("div", first.session, "session-name"));
+    passages.append(...hits.map(hit => passage(hit, result.q)));
+    row.append(meta, passages);
     block.append(row);
   }
   results.replaceChildren(block);
@@ -115,7 +159,7 @@ async function runSearch() {
   pending = controller;
   submitted = true;
   results.replaceChildren();
-  count.textContent = "";
+  message.className = "message";
   heading.textContent = "Searching…";
   message.textContent = "";
   results.setAttribute("aria-busy", "true");
@@ -157,7 +201,13 @@ async function changeSource() {
 
 form.addEventListener("submit", event => { event.preventDefault(); runSearch(); });
 document.querySelector("aside").addEventListener("change", event => {
-  if (event.target.name === "mode") changeSource();
+  if (event.target === compactMode) {
+    form.elements.namedItem("mode").value = compactMode.value;
+    changeSource();
+  } else if (event.target.name === "mode") {
+    compactMode.value = event.target.value;
+    changeSource();
+  }
   if (submitted && input.value.trim()) runSearch();
 });
 input.addEventListener("input", () => {
@@ -166,6 +216,43 @@ input.addEventListener("input", () => {
   submitted = false;
   results.replaceChildren();
   heading.textContent = "Find a passage";
-  count.textContent = "";
+  message.className = "message";
   message.textContent = startMessage;
+});
+
+// Shortcuts leave typing and native filter controls to the browser.
+document.addEventListener("keydown", event => {
+  const target = event.target;
+  if (event.isComposing || event.altKey || !(target instanceof HTMLElement)) return;
+  const key = event.key;
+  const typing = target.matches("input, textarea, select, [contenteditable=true]");
+  if (((event.metaKey || event.ctrlKey) && key.toLowerCase() === "k") ||
+      (!event.metaKey && !event.ctrlKey && !typing && key === "/")) {
+    event.preventDefault();
+    input.focus();
+    input.select();
+    return;
+  }
+  if (event.metaKey || event.ctrlKey || event.shiftKey) return;
+  if (target === input && key === "ArrowDown") {
+    const first = results.querySelector("summary");
+    if (first) { event.preventDefault(); first.focus(); }
+    return;
+  }
+  if (!target.matches("summary") || !results.contains(target)) return;
+  const detail = target.parentElement;
+  const items = Array.from(results.querySelectorAll("summary"));
+  const index = items.indexOf(target);
+  switch (key) {
+    case "ArrowDown": case "j": items[Math.min(items.length - 1, index + 1)].focus(); break;
+    case "ArrowUp": case "k": items[Math.max(0, index - 1)].focus(); break;
+    case "Home": items[0].focus(); break;
+    case "End": items.at(-1).focus(); break;
+    case "ArrowRight": detail.open = true; break;
+    case "ArrowLeft": detail.open = false; break;
+    case "c": detail.open = true; detail.querySelector(".copy")?.click(); break;
+    case "Escape": input.focus(); input.select(); break;
+    default: return;
+  }
+  event.preventDefault();
 });

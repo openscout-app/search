@@ -5,6 +5,7 @@ import { InputError, indexStatus, search } from "./search.mjs";
 const assets = new Map([
   ["/", ["index.html", "text/html"]],
   ["/app.css", ["app.css", "text/css"]],
+  ["/search.svg", ["search.svg", "image/svg+xml"]],
   ["/app.js", ["app.js", "text/javascript"]],
 ]);
 const publicRoot = new URL("../public/", import.meta.url);
