@@ -5,12 +5,28 @@
   "license": "Apache-2.0",
   "repository": { "type": "git", "url": "git+https://github.com/openscout-app/search.git" },
   "type": "module",
+  "exports": {
+    "./passages": { "types": "./ui/passages.d.ts", "import": "./ui/passages.jsx" },
+    "./passages.css": "./ui/passages.css",
+    "./package.json": "./package.json"
+  },
   "bin": { "scout-search": "bin/scout-search.mjs" },
-  "files": ["bin", "server", "public", "vendor", "docs/search.png", "NOTICE", "README.md"],
+  "files": ["bin", "server", "public", "dist", "ui", "vendor", "docs/search.png", "NOTICE", "README.md"],
   "engines": { "node": ">=20" },
   "scripts": {
+    "build": "node scripts/build-client.mjs",
+    "prepare": "npm run build",
     "start": "node bin/scout-search.mjs",
     "test": "node --test test/*.test.mjs"
   },
+  "devDependencies": {
+    "esbuild": "0.25.12",
+    "hudsonkit": "0.3.5",
+    "lucide-react": "0.574.0",
+    "react": "19.2.3",
+    "react-dom": "19.2.3"
+  },
+  "peerDependencies": { "react": "^19.0.0" },
+  "peerDependenciesMeta": { "react": { "optional": true } },
   "dependencies": { "@openscout/scout": "0.5.3" }
 }

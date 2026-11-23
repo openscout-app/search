@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-hudson-template="hudson" data-hudson-theme="light">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -10,55 +10,6 @@
   <title>Scout Search</title>
 </head>
 <body>
-  <div class="frame">
-    <aside aria-label="Search filters">
-      <header class="brand"><span class="lens" aria-hidden="true"></span>Scout Search</header>
-      <div class="controls">
-        <fieldset id="sources"><legend>Search in</legend>
-          <label><input form="search-form" name="mode" type="radio" value="recent" checked>Recent sessions</label>
-          <label><input form="search-form" name="mode" type="radio" value="index">Local index</label>
-        </fieldset>
-        <label class="filter compact-mode">Search in
-          <select id="compact-mode">
-            <option value="recent">Recent</option><option value="index">Local index</option>
-          </select>
-        </label>
-        <label class="filter">Harness
-          <select form="search-form" name="harness" id="harness">
-            <option value="">All</option><option value="claude">Claude Code</option><option value="codex">Codex</option><option value="kimi">Kimi</option>
-          </select>
-        </label>
-        <label class="filter">Sessions updated
-          <select form="search-form" name="hours" id="hours">
-            <option value="24">Last 24 hours</option><option value="72" selected>Last 3 days</option>
-            <option value="168">Last 7 days</option><option value="720">Last 30 days</option>
-          </select>
-        </label>
-      </div>
-      <p class="scope-note" id="scope-note">Recent search reads up to 80 transcript files on this host.</p>
-    </aside>
-    <main>
-      <div class="workspace">
-        <header class="query-head">
-          <h1>Search sessions</h1>
-          <form id="search-form" role="search">
-            <label class="sr-only" for="query">Search session transcripts</label>
-            <div class="search-field"><span aria-hidden="true" class="lens"></span>
-              <input id="query" type="search" name="q" placeholder="Search for a phrase or command" required maxlength="300" autocomplete="off" spellcheck="false" aria-keyshortcuts="/ Meta+k Control+k">
-              <kbd aria-hidden="true">/</kbd>
-              <button class="primary" type="submit">Search</button>
-            </div>
-          </form>
-        </header>
-        <section aria-label="Search results">
-          <div class="results-head" role="status" aria-atomic="true">
-            <h2 id="result-title">Find a passage</h2>
-            <p class="message" id="message">Enter words you remember from a session with Claude Code, Codex or Kimi.</p>
-          </div>
-          <div id="results"></div>
-        </section>
-      </div>
-    </main>
-  </div>
+  <div id="root"></div>
 </body>
 </html>

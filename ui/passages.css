@@ -1,0 +1,8 @@
+.sp-group-head, .sp-passages { min-width: 0; }
+.sp-summary, .sp-copy { cursor: pointer; }
+.sp-excerpt, .sp-coords > span { overflow-wrap: anywhere; }
+.sp-coords > span { max-width: 100%; }
+.sp-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
+.sp-copy-hint { flex-basis: 100%; }
+.sp-manual-copy { width: 100%; resize: vertical; }
+.sp-sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }

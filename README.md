@@ -51,6 +51,14 @@ npm test
 npm start
 ~~~
 
+The standalone page uses HudsonKit controls. JSX-capable React apps can import
+`PassageList` from `@openscout/search/passages` and its base styles from
+`@openscout/search/passages.css`. Pass session groups with an `id`, a `header`,
+and `passages`. Each passage has an `id` and excerpt `text`. Supply a
+`reference` array of label/value pairs to expand and copy its source, or
+`onSelect` and `onOpen` callbacks to use the app’s own session inspector.
+The component renders the results you supply and makes no network requests.
+
 The recent-session reader is built from the same public Scout release as the packaged CLI. To regenerate `vendor/recent.mjs`, run `scripts/build-reader.sh` with Bun 1.4.4. An optional path to an existing Scout Git checkout avoids a download. The script builds the pinned commit from Git objects.
 
 Apache-2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
