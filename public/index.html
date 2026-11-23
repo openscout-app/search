@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/app.css">
+  <script type="module" src="/app.js"></script>
+  <title>Scout Search</title>
+</head>
+<body>
+  <div class="frame">
+    <aside aria-label="Search filters">
+      <header class="brand"><span class="lens" aria-hidden="true"></span>Scout Search</header>
+      <fieldset id="sources"><legend>Search in</legend>
+        <label><input form="search-form" name="mode" type="radio" value="recent" checked>Recent sessions</label>
+        <label><input form="search-form" name="mode" type="radio" value="index">Local index</label>
+      </fieldset>
+      <div class="filters">
+        <label for="harness">Harness</label>
+        <select form="search-form" name="harness" id="harness">
+          <option value="">All harnesses</option><option value="claude">Claude Code</option><option value="codex">Codex</option><option value="kimi">Kimi</option>
+        </select>
+        <label for="hours">Sessions updated</label>
+        <select form="search-form" name="hours" id="hours">
+          <option value="24">Last 24 hours</option><option value="72" selected>Last 3 days</option>
+          <option value="168">Last 7 days</option><option value="720">Last 30 days</option>
+        </select>
+      </div>
+      <div class="scope-note" id="scope-note">Recent search reads up to 80 transcript files on this host.</div>
+    </aside>
+    <main>
+      <div class="workspace">
+        <h1>Search sessions</h1>
+        <form id="search-form" role="search">
+          <label class="sr-only" for="query">Search session transcripts</label>
+          <div class="search-field"><span aria-hidden="true" class="lens"></span>
+            <input id="query" type="search" name="q" placeholder="Search for a phrase or command" required maxlength="300" autocomplete="off" spellcheck="false">
+            <button class="primary" type="submit">Search</button>
+          </div>
+        </form>
+        <section aria-label="Search results">
+          <div class="results-head">
+            <h2 id="result-title">Find a passage</h2>
+            <span id="result-count"></span>
+          </div>
+          <p class="message" id="message" role="status">Enter words you remember from a session with Claude Code, Codex or Kimi.</p>
+          <div id="results"></div>
+        </section>
+      </div>
+    </main>
+  </div>
+</body>
+</html>
