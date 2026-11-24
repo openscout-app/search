@@ -115,7 +115,7 @@ test("serves the built Search controls and theme from the same local origin", as
   }
 });
 
-test("a window search reads every transcript in the window", async () => {
+test("a window search pages through every transcript in the window", async () => {
   const dir = join(roots.OPENSCOUT_TAIL_CODEX_SESSIONS_ROOT, "2026/02/01");
   await mkdir(dir, { recursive: true });
   await Promise.all(Array.from({ length: 120 }, (_, index) => writeFile(
@@ -126,11 +126,35 @@ test("a window search reads every transcript in the window", async () => {
         content: [{ type: "output_text", text: `batchmarker passage ${index}` }] } },
     ].map((row) => JSON.stringify(row)).join("\n") + "\n",
   )));
-  const data = await (await post({ q: "batchmarker" })).json();
-  assert.equal(data.hits.length, 120);
-  assert.equal(data.coverage.scannedFiles, data.coverage.candidates);
-  assert.equal(data.coverage.candidates, 121);
-  assert.deepEqual(new Set(data.hits.map((hit) => hit.session)).size, 120);
+  const sessions = new Set();
+  let total = 0;
+  let page = await (await post({ q: "batchmarker" })).json();
+  assert.equal(page.hits.length, 30);
+  assert.ok(page.next);
+  for (;;) {
+    total += page.hits.length;
+    for (const hit of page.hits) sessions.add(hit.session);
+    if (!page.next) break;
+    page = await (await post({ q: "batchmarker", after: page.next })).json();
+  }
+  assert.equal(total, 120);
+  assert.equal(sessions.size, 120);
+  assert.equal(page.coverage.candidates, 121);
+  assert.equal(page.next, null);
+
+  const small = await (await post({ q: "batchmarker", limit: 7 })).json();
+  assert.equal(small.hits.length, 7);
+  assert.ok(small.next);
+  const again = await (await post({ q: "batchmarker", limit: 7, after: small.next })).json();
+  assert.equal(again.hits.length, 7);
+  assert.equal(new Set([...small.hits, ...again.hits].map((hit) => hit.session)).size, 14);
+
+  const wrong = await post({ q: "lantern", after: small.next });
+  assert.equal(wrong.status, 400);
+  assert.equal((await post({ q: "batchmarker", after: "not-a-page" })).status, 400);
+  assert.equal((await post({ q: "batchmarker", limit: 0 })).status, 400);
+  assert.equal((await post({ q: "batchmarker", limit: 501 })).status, 400);
+  assert.equal((await post({ q: "batchmarker", mode: "index", after: small.next })).status, 400);
 });
 
 test("returns every matching passage in one session", async () => {

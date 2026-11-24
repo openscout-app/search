@@ -1,7 +1,9 @@
 import { execFile } from "node:child_process";
 import { createRequire } from "node:module";
+import { homedir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
+import { pageCap, pageSize } from "../shared/pages.mjs";
 import { defaultWindow, findWindow, windowChoices } from "../shared/windows.mjs";
 import { scanRecent } from "./recent.mjs";
 
@@ -19,6 +21,49 @@ export function readScope(input) {
   const harness = input.harness || "";
   if (harness && !harnesses.includes(harness)) throw new InputError("Choose Claude Code, Codex or Kimi.");
   return { window, harness };
+}
+
+export function readLimit(input) {
+  const limit = input.limit == null ? pageSize : Number(input.limit);
+  if (!Number.isInteger(limit) || limit < 1 || limit > pageCap) {
+    throw new InputError(`Choose between 1 and ${pageCap} passages per page.`);
+  }
+  return limit;
+}
+
+function cursorPath(file) {
+  const home = homedir();
+  const rel = path.relative(home, file.path);
+  if (rel && !rel.startsWith("..") && !rel.startsWith(path.sep)) return { root: "HOME", relPath: rel, mtimeMs: file.mtimeMs };
+  return { root: "ABSOLUTE", relPath: file.path, mtimeMs: file.mtimeMs };
+}
+
+function absolutePath(at) {
+  return at.root === "HOME" ? path.join(homedir(), at.relPath) : at.relPath;
+}
+
+function encodeCursor(value) {
+  return Buffer.from(JSON.stringify(value)).toString("base64url");
+}
+
+function decodeCursor(input, scope) {
+  if (input.after == null || input.after === "") return null;
+  let value;
+  try {
+    if (typeof input.after !== "string" || input.after.length > 2048) throw new Error();
+    value = JSON.parse(Buffer.from(input.after, "base64url").toString("utf8"));
+  } catch {
+    throw new InputError("That page is not valid.");
+  }
+  const at = value?.at;
+  if (value?.v !== 1 || (at?.root !== "HOME" && at?.root !== "ABSOLUTE")
+    || typeof at?.relPath !== "string" || !at.relPath || !Number.isFinite(at?.mtimeMs)) {
+    throw new InputError("That page is not valid.");
+  }
+  if (value.q !== scope.q || value.window !== scope.window || (value.harness || "") !== (scope.harness || "")) {
+    throw new InputError("That page belongs to another search.");
+  }
+  return { path: absolutePath(at), mtimeMs: at.mtimeMs };
 }
 
 export function scoutBin() {
@@ -70,18 +115,24 @@ export async function search(input, signal) {
     throw new InputError("Use at least one term of two characters and up to 300 characters in total.");
   }
   if (mode === "recent") {
-    const scan = await scanRecent({ q, hours: window.hours, harness: harness || undefined, signal });
-    return { mode, q, window: window.id, hits: scan.hits.map(presentHit), coverage: {
+    const limit = readLimit(input);
+    const scope = { q, window: window.id, harness };
+    const cursor = decodeCursor(input, scope);
+    const scan = await scanRecent({ q, hours: window.hours, harness: harness || undefined, limit, cursor, signal });
+    return { mode, q, window: window.id, limit, hits: scan.hits.map(presentHit), next: scan.next
+      ? encodeCursor({ v: 1, ...scope, at: cursorPath(scan.next) })
+      : null, coverage: {
       kind: "recent", window: window.id, scannedFiles: scan.scannedFiles, candidates: scan.candidates,
       partial: scan.truncated,
     } };
   }
+  if (input.after != null && input.after !== "") throw new InputError("The local index cannot continue a page. Narrow the window instead.");
   // The indexed CLI treats dash-prefixed positional arguments as its own flags.
   if (q.startsWith("-")) throw new InputError("For a term beginning with a dash, use Recent sessions.");
   const result = await scoutJson(["query", q, "--hours", String(window.hours), "--limit", String(indexHitCeiling),
     ...(harness ? ["--harness", harness] : [])], signal);
   if (!Array.isArray(result.hits) || !result.coverage?.kind) throw new Error("Scout returned an unrecognized search result.");
-  return { mode, q, window: window.id, hits: result.hits.map(presentHit), coverage: {
+  return { mode, q, window: window.id, limit: indexHitCeiling, hits: result.hits.map(presentHit), next: null, coverage: {
     ...result.coverage, partial: result.coverage.partial === true || result.hits.length >= indexHitCeiling,
   } };
 }

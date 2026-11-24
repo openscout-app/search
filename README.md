@@ -14,7 +14,9 @@ With Node 20 or newer, this opens Scout Search at http://127.0.0.1:4803. The lau
 
 ## Recent sessions
 
-Enter words from the passage you want. Search reads every transcript file updated in the chosen window. The window is the only scope: **Last 4 hours**, **Last 24 hours**, **Last 3 days**, **Last 7 days** or **Last 30 days**, three days by default. The reader looks for all query terms of two or more characters in the same record. A wide window covers more history and takes longer to read than a narrow one. The result includes how many transcript files it read, whatever that number is. A miss covers only the history searched.
+Enter words from the passage you want. The window is the only scope: **Last 4 hours**, **Last 24 hours**, **Last 3 days**, **Last 7 days** or **Last 30 days**, three days by default. The reader looks for all query terms of two or more characters in the same record.
+
+Results come 30 passages at a time, newest sessions first. **Show more passages** continues the same search where it stopped; nothing is capped and nothing repeats. The result says how many of the window's transcript files it read and how many the window holds. A miss covers only the history searched.
 
 A recent search works with the local index off and the Scout runtime stopped. It reads transcripts in place. Queries and results stay on this host. The page listens on loopback and fetches its scripts, styles and results from the same address.
 
@@ -23,6 +25,8 @@ Agents and shell scripts can use the same search:
 ~~~sh
 npx github:openscout-app/search query "export queue" --harness codex --window 24h
 npx github:openscout-app/search query "export queue" --json
+npx github:openscout-app/search query "export queue" --window 7d --limit 10
+npx github:openscout-app/search query "export queue" --window 7d --after <page>
 ~~~
 
 JSON includes the search mode, coverage and hits. Each hit includes a passage and its source coordinates when available. Record numbers use Scout's zero-based convention.

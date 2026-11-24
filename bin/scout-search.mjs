@@ -57,7 +57,7 @@ async function main(argv) {
   const str = { type: "string" }, bool = { type: "boolean" };
   const scope = { window: str, harness: str };
   const flags = { serve: { port: str, "no-open": bool }, status: { json: bool }, index: scope,
-    query: { ...scope, mode: str, json: bool } };
+    query: { ...scope, mode: str, limit: str, after: str, json: bool } };
   if (!Object.hasOwn(flags, command)) throw new Error("Unknown command. Run scout-search --help.");
   const { values, positionals } = parseArgs({ args: argv, options: flags[command], allowPositionals: command === "query" });
   if (command === "serve") return serve(Number(values.port ?? process.env.SCOUT_SEARCH_PORT ?? 4803), values["no-open"]);
@@ -89,13 +89,18 @@ async function main(argv) {
   const result = await search({ ...values, q: positionals.join(" ") });
   if (values.json) return console.log(JSON.stringify(result, null, 2));
   const c = result.coverage;
-  if (c.kind === "recent") console.log("Recent sessions · " + c.candidates + (c.candidates === 1 ? " transcript file" : " transcript files") + " read in the " + findWindow(result.window).label.toLowerCase() + (c.partial ? " · partial scan" : ""));
+  if (c.kind === "recent") console.log("Recent sessions · " + c.scannedFiles + " of " + c.candidates + " transcript files read in the " + findWindow(result.window).label.toLowerCase() + (c.partial ? " · partial scan" : ""));
   else console.log(c.suggestion ?? ("Indexed coverage: " + c.kind + (c.stale ? " (stale)" : "")));
   console.log(result.hits.length + " matching passages returned.");
   for (const hit of result.hits) {
     console.log("\n" + [hit.harness, hit.project, hit.session].filter(Boolean).join(" · "));
     console.log(hit.excerpt);
     if (hit.source) console.log(hit.source + (hit.records ? " (records " + hit.records.join("–") + ")" : ""));
+  }
+  if (result.next) {
+    console.log("\nMore passages are in this window. Continue with:");
+    console.log("  " + ["scout-search", "query", JSON.stringify(result.q), "--window", result.window,
+      ...(values.harness ? ["--harness", values.harness] : []), "--after", result.next].join(" "));
   }
 }
 

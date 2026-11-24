@@ -121,7 +121,17 @@ async function discoverFiles(cutoffMs, harness, signal) {
       }
     }
   }
-  return files.sort((left, right) => right.mtimeMs - left.mtimeMs);
+  return files.sort((left, right) => right.mtimeMs - left.mtimeMs
+    || (left.path < right.path ? -1 : left.path > right.path ? 1 : 0));
+}
+
+function resumeIndex(files, at) {
+  if (!at) return 0;
+  const index = files.findIndex((file) => file.path === at.path && file.mtimeMs === at.mtimeMs);
+  if (index >= 0) return index + 1;
+  const next = files.findIndex((file) => file.mtimeMs < at.mtimeMs
+    || (file.mtimeMs === at.mtimeMs && file.path > at.path));
+  return next >= 0 ? next : files.length;
 }
 
 function findRipgrep() {
@@ -282,7 +292,7 @@ async function transcriptHead(file) {
   return { cwd, sessionId };
 }
 
-function readRipgrepBatch(rg, paths, needle, signal, onLine) {
+function readRipgrepBatch(rg, paths, needle, signal, onLine, shouldStop) {
   return new Promise((resolve) => {
     const child = spawn(rg, [
       "--ignore-case",
@@ -293,6 +303,9 @@ function readRipgrepBatch(rg, paths, needle, signal, onLine) {
       "--with-filename",
       "--null",
       "--no-messages",
+      // One thread keeps matches in file order, so a page can stop at a file
+      // boundary without skipping the files it has not reported yet.
+      "--threads=1",
       "--",
       needle,
       ...paths,
@@ -321,7 +334,13 @@ function readRipgrepBatch(rg, paths, needle, signal, onLine) {
       carry += chunk;
       const rows = carry.split("\n");
       carry = rows.pop() ?? "";
-      for (const row of rows) take(row);
+      for (const row of rows) {
+        if (shouldStop?.()) {
+          stop();
+          return;
+        }
+        take(row);
+      }
     });
     child.on("error", () => {
       failed = true;
@@ -330,16 +349,16 @@ function readRipgrepBatch(rg, paths, needle, signal, onLine) {
       if (killTimer) clearTimeout(killTimer);
       signal?.removeEventListener("abort", stop);
       if (carry && !killed) take(carry);
-      if (killed) return resolve(false);
+      if (killed) return resolve(!signal?.aborted);
       if (failed || (code !== 0 && code !== 1)) return resolve(false);
       resolve(true);
     });
   });
 }
 
-async function readFiles(files, terms, signal, onLine) {
+async function readFiles(files, terms, signal, onLine, shouldStop) {
   for (const file of files) {
-    if (signal?.aborted) return;
+    if (signal?.aborted || shouldStop?.()) return;
     let carry = "";
     let byte = 0;
     let lineNo = 0;
@@ -371,34 +390,46 @@ async function readFiles(files, terms, signal, onLine) {
 // Matched lines are parsed as they arrive, so only passages are held. The
 // guard stops a query that matches a mountain of text; it is a memory bound,
 // not a result limit.
-async function scanFiles(files, terms, signal, onLine) {
+async function scanFiles(files, terms, signal, onLine, shouldStop) {
   const needle = [...terms].sort((left, right) => right.length - left.length)[0];
   const rg = findRipgrep();
   if (rg && files.length > 0) {
     let complete = true;
-    for (let start = 0; start < files.length && complete; start += RG_BATCH) {
-      complete = await readRipgrepBatch(rg, files.slice(start, start + RG_BATCH).map((file) => file.path), needle, signal, onLine);
+    for (let start = 0; start < files.length && complete && !shouldStop?.(); start += RG_BATCH) {
+      complete = await readRipgrepBatch(rg, files.slice(start, start + RG_BATCH).map((file) => file.path), needle, signal, onLine, shouldStop);
     }
     if (complete || signal?.aborted) return true;
   }
-  await readFiles(files, terms, signal, onLine);
+  await readFiles(files, terms, signal, onLine, shouldStop);
   return false;
 }
 
-export async function scanRecent({ q, hours, harness, signal }) {
+export async function scanRecent({ q, hours, harness, limit = 30, cursor, signal }) {
   const terms = [...new Set(q.toLowerCase().split(/\s+/u).filter((term) => term.length > 1))];
-  if (terms.length === 0) return { hits: [], scannedFiles: 0, candidates: 0, truncated: false };
+  if (terms.length === 0) return { hits: [], scannedFiles: 0, candidates: 0, truncated: false, next: null };
   const cutoffMs = Date.now() - hours * 3_600_000;
   const files = await discoverFiles(cutoffMs, harness, signal);
-  const byPath = new Map(files.map((file) => [file.path, file]));
+  const pending = files.slice(resumeIndex(files, cursor));
+  const byPath = new Map(pending.map((file) => [file.path, file]));
   const phrase = terms.join(" ");
   const matchesByPath = new Map();
   let collected = 0;
   let truncated = false;
+  let stopped = false;
+  let current = null;
+  let found = 0;
   const onLine = (path, lineNo, byte, raw) => {
-    if (truncated) return;
+    if (truncated || stopped) return;
     const file = byPath.get(path);
     if (!file) return;
+    // Stop at a file boundary once the page has enough to return.
+    if (current !== path) {
+      if (found >= limit) {
+        stopped = true;
+        return;
+      }
+      current = path;
+    }
     const text = recordText(raw, file.harness);
     if (!text) return;
     const body = stripHarnessBoilerplate(text);
@@ -438,12 +469,18 @@ export async function scanRecent({ q, hours, harness, signal }) {
     }
     entry.seen.set(key, match);
     entry.matches.push(match);
+    found++;
   };
-  await scanFiles(files, terms, signal, onLine);
+  await scanFiles(pending, terms, signal, onLine, () => stopped);
   signal?.throwIfAborted();
   const home = homedir();
   const hits = [];
-  for (const file of files) {
+  let last = null;
+  let scanned = 0;
+  for (const file of pending) {
+    if (hits.length >= limit) break;
+    last = file;
+    scanned++;
     const entry = matchesByPath.get(file.path);
     if (!entry?.matches.length) continue;
     entry.matches.sort((left, right) => Number(right.phrase) - Number(left.phrase) || right.index - left.index);
@@ -491,5 +528,12 @@ export async function scanRecent({ q, hours, harness, signal }) {
       });
     }
   }
-  return { hits, scannedFiles: files.length, candidates: files.length, truncated };
+  const more = !truncated && last !== null && last !== pending[pending.length - 1];
+  return {
+    hits,
+    scannedFiles: scanned,
+    candidates: files.length,
+    truncated,
+    next: more ? { path: last.path, mtimeMs: last.mtimeMs } : null,
+  };
 }

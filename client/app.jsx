@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { HudButton, HudInput, HudSelect } from "hudsonkit/primitives";
+import { pageSize } from "../shared/pages.mjs";
 import { defaultWindow, findWindow, windows as windowSteps } from "../shared/windows.mjs";
 import { PassageList } from "../ui/passages.jsx";
 
@@ -100,6 +101,8 @@ function coverageText(c, scope) {
   switch (c.kind) {
     case "recent":
       return (
+        c.scannedFiles +
+        " of " +
         c.candidates +
         (c.candidates === 1 ? " transcript file read in the " : " transcript files read in the ") +
         findWindow(scope.window).label.toLowerCase() +
@@ -196,7 +199,8 @@ function App() {
   const input = useRef(null),
     form = useRef(null),
     results = useRef(null),
-    pending = useRef(null);
+    pending = useRef(null),
+    more = useRef(null);
   const [query, setQuery] = useState("");
   const [scope, setScope] = useState({ mode: "recent", window: defaultWindow, harness: "" });
   const [scopeNote, setNote] = useState(recentNote);
@@ -240,6 +244,7 @@ function App() {
 
   async function search(nextScope) {
     pending.current?.abort();
+    more.current?.abort();
     const controller = new AbortController();
     pending.current = controller;
     setView({ state: "pending" });
@@ -248,14 +253,37 @@ function App() {
         method: "POST",
         signal: controller.signal,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...nextScope, q: query }),
+        body: JSON.stringify({ ...nextScope, q: query, limit: pageSize }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error);
       if (!controller.signal.aborted)
-        setView({ state: "ready", data, scope: nextScope, groups: buildGroups(data.hits) });
+        setView({ state: "ready", data, scope: nextScope, hits: data.hits, groups: buildGroups(data.hits),
+          next: data.next, scanned: data.coverage.scannedFiles, morePending: false });
     } catch (error) {
       if (!controller.signal.aborted) setView({ state: "error", message: error.message });
+    }
+  }
+  async function loadMore() {
+    if (!view.next || view.morePending) return;
+    setView({ ...view, morePending: true, moreError: null });
+    const controller = new AbortController();
+    more.current = controller;
+    try {
+      const response = await fetch("/api/search", {
+        method: "POST",
+        signal: controller.signal,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...view.scope, q: view.data.q, limit: pageSize, after: view.next }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error);
+      if (controller.signal.aborted) return;
+      const hits = [...view.hits, ...data.hits];
+      setView({ ...view, hits, groups: buildGroups(hits), next: data.next,
+        scanned: (view.scanned ?? 0) + (data.coverage.scannedFiles ?? 0), morePending: false, moreError: null });
+    } catch (error) {
+      if (!controller.signal.aborted) setView({ ...view, morePending: false, moreError: error.message });
     }
   }
   function changeScope(name, value) {
@@ -277,17 +305,19 @@ function App() {
     message = view.message;
   }
   if (view.state === "ready") {
-    const { hits, coverage: c } = view.data,
-      count = view.groups.length;
+    const c = view.data.coverage,
+      count = view.groups.length,
+      total = view.hits.length;
     title =
-      hits.length +
-      (hits.length === 1 ? " passage in " : " passages in ") +
+      total +
+      (total === 1 ? " passage in " : " passages in ") +
       count +
       (count === 1 ? " session" : " sessions");
     if (c.kind === "index_off") title = "Local index is off";
     else if (["empty_index", "not_warmed"].includes(c.kind)) title = "This window hasn’t been indexed";
     else if (!count) title = "No matches in the searched history";
-    message = coverageText(c, view.scope);
+    message = coverageText({ ...c, scannedFiles: view.scanned ?? c.scannedFiles }, view.scope)
+      + (view.next ? " More passages are in this window." : "");
     coverage = c.kind === "recent" || count > 0;
     partial = c.partial || c.stale || c.kind === "bounded";
   }
@@ -380,6 +410,7 @@ function App() {
                     setQuery(e.target.value);
                     if (!e.target.value) {
                       pending.current?.abort();
+                      more.current?.abort();
                       setView({ state: "initial" });
                     }
                   }}
@@ -404,8 +435,25 @@ function App() {
                 {message}
               </p>
             </div>
-            <div ref={results} aria-busy={view.state === "pending"}>
-              {view.state === "ready" && <PassageList groups={view.groups} query={view.data.q} />}
+            <div ref={results} aria-busy={view.state === "pending" || view.morePending === true}>
+              {view.state === "ready" && (
+                <>
+                  <PassageList groups={view.groups} query={view.data.q} />
+                  {view.next && (
+                    <div className="more">
+                      <HudButton
+                        variant="ghost"
+                        className="primary"
+                        onClick={loadMore}
+                        disabled={view.morePending}
+                      >
+                        {view.morePending ? "Loading…" : "Show more passages"}
+                      </HudButton>
+                      {view.moreError && <span className="message partial">{view.moreError}</span>}
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           </section>
         </div>
