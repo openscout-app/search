@@ -11,7 +11,7 @@
     "./package.json": "./package.json"
   },
   "bin": { "scout-search": "bin/scout-search.mjs" },
-  "files": ["bin", "server", "public", "dist", "ui", "vendor", "docs/search.png", "NOTICE", "README.md"],
+  "files": ["bin", "server", "shared", "public", "dist", "ui", "docs/search.png", "NOTICE", "README.md"],
   "engines": { "node": ">=20" },
   "scripts": {
     "build": "node scripts/build-client.mjs",

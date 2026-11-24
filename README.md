@@ -14,14 +14,14 @@ With Node 20 or newer, this opens Scout Search at http://127.0.0.1:4803. The lau
 
 ## Recent sessions
 
-Enter words from the passage you want. Search looks in up to 80 of the newest transcript files updated in the chosen window, three days by default. The reader looks for all query terms of two or more characters in the same record. The file scan has a 2.5-second budget and returns up to 30 passages, with up to three per file. The result includes how many candidate files it read. A miss covers only the history searched.
+Enter words from the passage you want. Search reads every transcript file updated in the chosen window. The window is the only scope: **Last 4 hours**, **Last 24 hours**, **Last 3 days**, **Last 7 days** or **Last 30 days**, three days by default. The reader looks for all query terms of two or more characters in the same record. A wide window covers more history and takes longer to read than a narrow one. The result includes how many transcript files it read, whatever that number is. A miss covers only the history searched.
 
 A recent search works with the local index off and the Scout runtime stopped. It reads transcripts in place. Queries and results stay on this host. The page listens on loopback and fetches its scripts, styles and results from the same address.
 
 Agents and shell scripts can use the same search:
 
 ~~~sh
-npx github:openscout-app/search query "export queue" --harness codex --hours 24
+npx github:openscout-app/search query "export queue" --harness codex --window 24h
 npx github:openscout-app/search query "export queue" --json
 ~~~
 
@@ -32,13 +32,13 @@ JSON includes the search mode, coverage and hits. Each hit includes a passage an
 Use **Local index** to search a window you have explicitly indexed. This mode uses the Scout CLI included in the package and requires Bun 1.4.4 or later. Set `SCOUT_BIN` to use a compatible Scout installation of your choice.
 
 1. Turn on **Local search index** in Scout Settings › System, or set `knowledgeIndexEnabled` to `true` in Scout's existing `settings.json`.
-2. Index the time window and any harness you want to search.
+2. Index the window and any harness you want to search.
 3. Select **Local index** in the browser, or pass `--mode index` to a terminal query.
 
 ~~~sh
 npx github:openscout-app/search status
-npx github:openscout-app/search index --hours 168 --harness claude
-npx github:openscout-app/search query "export queue" --mode index --hours 168 --harness claude
+npx github:openscout-app/search index --window 7d --harness claude
+npx github:openscout-app/search query "export queue" --mode index --window 7d --harness claude
 ~~~
 
 Opening the page and running a query leave the index setting and its coverage alone. Search reports when indexing is off, a window needs indexing, or the retained history is stale or bounded. Scout manages the index and its storage cap.

@@ -1,22 +1,18 @@
 import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { HudButton, HudInput, HudSelect } from "hudsonkit/primitives";
+import { defaultWindow, findWindow, windows as windowSteps } from "../shared/windows.mjs";
 import { PassageList } from "../ui/passages.jsx";
 
 const harnessNames = { claude: "Claude Code", codex: "Codex", kimi: "Kimi" };
 const options = (rows) => rows.map(([value, label]) => ({ value, label }));
 const harnesses = options([["", "All"], ...Object.entries(harnessNames)]);
-const windows = options([
-  ["24", "Last 24 hours"],
-  ["72", "Last 3 days"],
-  ["168", "Last 7 days"],
-  ["720", "Last 30 days"],
-]);
+const windows = options(windowSteps.map((step) => [step.id, step.label]));
 const modes = options([
-  ["recent", "Recent"],
+  ["recent", "Recent sessions"],
   ["index", "Local index"],
 ]);
-const recentNote = "Recent search reads up to 80 transcript files on this host.";
+const recentNote = "Recent search reads every transcript updated in this window.";
 
 function referenceFor(hit) {
   const rows = [
@@ -104,24 +100,25 @@ function coverageText(c, scope) {
   switch (c.kind) {
     case "recent":
       return (
-        c.scannedFiles +
-        " of " +
         c.candidates +
-        " candidate files read." +
-        (c.partial ? " Results cover part of the selected history." : "")
+        (c.candidates === 1 ? " transcript file read in the " : " transcript files read in the ") +
+        findWindow(scope.window).label.toLowerCase() +
+        "." +
+        (c.partial ? " Results cover part of the window." : "")
       );
     case "index_off":
       return "Turn on Local search index in Scout Settings › System, then index the sessions you want to search.";
     case "not_warmed":
     case "empty_index":
       return (
-        "Index this window from a terminal, then search again.\nnpx github:openscout-app/search index --hours " +
-        scope.hours +
+        "Index this window from a terminal, then search again.\nnpx github:openscout-app/search index --window " +
+        scope.window +
         (scope.harness ? " --harness " + scope.harness : "")
       );
     case "bounded":
       return c.suggestion;
     case "warmed":
+      if (c.partial) return "The local index stops at 200 passages. Narrow the window to see the rest.";
       return c.stale
         ? "The index may be missing recent changes. Index this window again to refresh it."
         : "Results cover sessions in the indexed window.";
@@ -201,7 +198,7 @@ function App() {
     results = useRef(null),
     pending = useRef(null);
   const [query, setQuery] = useState("");
-  const [scope, setScope] = useState({ mode: "recent", hours: "72", harness: "" });
+  const [scope, setScope] = useState({ mode: "recent", window: defaultWindow, harness: "" });
   const [scopeNote, setNote] = useState(recentNote);
   const [view, setView] = useState({ state: "initial" });
   useKeys(input, results);
@@ -313,7 +310,7 @@ function App() {
                   checked={scope.mode === m.value}
                   onChange={() => changeScope("mode", m.value)}
                 />
-                {m.value === "recent" ? "Recent sessions" : m.label}
+                {m.label}
               </label>
             ))}
           </fieldset>
@@ -340,12 +337,12 @@ function App() {
           <label className="filter">
             Sessions updated
             <HudSelect
-              id="hours"
-              name="hours"
+              id="window"
+              name="window"
               form="search-form"
-              value={scope.hours}
+              value={scope.window}
               options={windows}
-              onChange={(e) => changeScope("hours", e.target.value)}
+              onChange={(e) => changeScope("window", e.target.value)}
             />
           </label>
         </div>

@@ -8,7 +8,7 @@ import { promisify } from "node:util";
 import { createServer } from "../server/serve.mjs";
 
 const exec = promisify(execFile);
-let home, env, server, url;
+let home, env, server, url, roots;
 const previous = new Map();
 const cli = (...args) => exec(process.execPath, ["bin/scout-search.mjs", ...args], { env });
 const post = (query, headers = {}) => fetch(url + "/api/search", {
@@ -32,6 +32,7 @@ before(async () => {
   delete process.env.SCOUT_BIN;
   assert.equal(homedir(), home);
   env = { ...process.env };
+  roots = paths;
   const root = join(paths.OPENSCOUT_TAIL_CODEX_SESSIONS_ROOT, "2026/01/01");
   await mkdir(root, { recursive: true });
   await mkdir(paths.OPENSCOUT_SUPPORT_DIRECTORY);
@@ -73,26 +74,26 @@ test("index opt-out and uncovered windows stay distinct from no matches", async 
   const q = { q: "checkpoint", mode: "index", harness: "codex" };
   const query = async () => (await post(q)).json();
   assert.equal((await query()).coverage.kind, "index_off");
-  await assert.rejects(cli("index", "--hours", "72"), error => error.code === 1 && error.stderr.includes("Search index is off"));
+  await assert.rejects(cli("index", "--window", "3d"), error => error.code === 1 && error.stderr.includes("Search index is off"));
   assert.equal((await (await fetch(url + "/api/status")).json()).enabled, false);
   await assert.rejects(access(join(home, "control/knowledge/knowledge.sqlite")));
   await writeFile(join(home, "support/settings.json"), JSON.stringify({ knowledgeIndexEnabled: true }));
   assert.equal((await query()).coverage.kind, "empty_index");
-  await cli("index", "--hours", "72", "--harness", "codex");
+  await cli("index", "--window", "3d", "--harness", "codex");
   const data = await query();
   assert.equal(data.coverage.kind, "warmed");
   assert.ok(data.hits.some(hit => hit.session === "fixture-session" && hit.excerpt.includes("checkpoint")));
   const none = await (await post({ ...q, q: "unfindable" })).json();
   assert.equal(none.coverage.kind, "warmed");
   assert.deepEqual(none.hits, []);
-  assert.equal((await (await post({ ...q, hours: 720 })).json()).coverage.kind, "not_warmed");
+  assert.equal((await (await post({ ...q, window: "30d" })).json()).coverage.kind, "not_warmed");
 });
 
 test("accepts only local API traffic and bounded queries", async () => {
   assert.equal((await post({ q: "checkpoint" }, { Origin: "https://example.org" })).status, 403);
   assert.equal((await post({ q: "checkpoint" }, { "Sec-Fetch-Site": "cross-site" })).status, 403);
   assert.equal((await post({ q: "checkpoint", harness: "unknown" })).status, 400);
-  assert.equal((await post({ q: "checkpoint", hours: 721 })).status, 400);
+  assert.equal((await post({ q: "checkpoint", window: "5h" })).status, 400);
   assert.equal((await post({ q: "x" })).status, 400);
   assert.equal((await post({ q: "--help", mode: "index" })).status, 400);
   assert.equal((await fetch(url + "/api/identity")).status, 200);
@@ -112,4 +113,75 @@ test("serves the built Search controls and theme from the same local origin", as
     assert.ok(asset.headers.get("content-type").startsWith(mime));
     assert.ok((await asset.text()).includes(marker));
   }
+});
+
+test("a window search reads every transcript in the window", async () => {
+  const dir = join(roots.OPENSCOUT_TAIL_CODEX_SESSIONS_ROOT, "2026/02/01");
+  await mkdir(dir, { recursive: true });
+  await Promise.all(Array.from({ length: 120 }, (_, index) => writeFile(
+    join(dir, `rollout-batch-${index}.jsonl`),
+    [
+      { type: "session_meta", payload: { id: `batch-${index}`, cwd: `/work/batch-${index}` } },
+      { type: "response_item", payload: { type: "message", role: "assistant",
+        content: [{ type: "output_text", text: `batchmarker passage ${index}` }] } },
+    ].map((row) => JSON.stringify(row)).join("\n") + "\n",
+  )));
+  const data = await (await post({ q: "batchmarker" })).json();
+  assert.equal(data.hits.length, 120);
+  assert.equal(data.coverage.scannedFiles, data.coverage.candidates);
+  assert.equal(data.coverage.candidates, 121);
+  assert.deepEqual(new Set(data.hits.map((hit) => hit.session)).size, 120);
+});
+
+test("returns every matching passage in one session", async () => {
+  const dir = join(roots.OPENSCOUT_TAIL_CODEX_SESSIONS_ROOT, "2026/02/02");
+  await mkdir(dir, { recursive: true });
+  const rows = [{ type: "session_meta", payload: { id: "many-hits", cwd: "/work/many" } }];
+  for (let index = 0; index < 12; index++) {
+    rows.push({ type: "response_item", payload: { type: "message", role: "assistant",
+      content: [{ type: "output_text", text: `lantern number ${index}` }] } });
+  }
+  await writeFile(join(dir, "rollout-many.jsonl"), rows.map((row) => JSON.stringify(row)).join("\n") + "\n");
+  const data = await (await post({ q: "lantern" })).json();
+  assert.equal(data.hits.length, 12);
+  assert.deepEqual([...new Set(data.hits.map((hit) => hit.session))], ["many-hits"]);
+  assert.deepEqual(data.hits.map((hit) => hit.records[0]).sort((a, b) => a - b), Array.from({ length: 12 }, (_, i) => i + 1));
+});
+
+test("reads Claude Code and Kimi transcripts", async () => {
+  const claudeDir = join(roots.OPENSCOUT_TAIL_CLAUDE_PROJECTS_ROOT, "-work-atlas");
+  await mkdir(claudeDir, { recursive: true });
+  await writeFile(join(claudeDir, "claude-one.jsonl"), [
+    { type: "user", sessionId: "claude-session", uuid: "u1",
+      message: { role: "user", content: [{ type: "text", text: "the harbor parser keeps a queue" }] } },
+    { type: "assistant", sessionId: "claude-session", uuid: "u2",
+      message: { role: "assistant", content: [{ type: "tool_use", name: "Bash", input: { command: "rg harbor" } }] } },
+  ].map((row) => JSON.stringify(row)).join("\n") + "\n");
+  const kimiDir = join(roots.OPENSCOUT_TAIL_KIMI_SESSIONS_ROOT, "wd_atlas", "session_kimi_one", "agents", "main");
+  await mkdir(kimiDir, { recursive: true });
+  await writeFile(join(kimiDir, "wire.jsonl"), [
+    { type: "turn.prompt", time: 1795452419, input: [{ type: "text", text: "wire harbor kimi" }] },
+    { type: "context.append_loop_event", time: 1795452420, event: { type: "content.part", part: { type: "text", text: "harbor reply" } } },
+  ].map((row) => JSON.stringify(row)).join("\n") + "\n");
+  const claude = await (await post({ q: "harbor", harness: "claude" })).json();
+  assert.equal(claude.hits.length, 2);
+  assert.equal(claude.hits[0].harness, "claude");
+  assert.equal(claude.hits[0].session, "claude-session");
+  assert.equal(claude.hits[0].project, "atlas");
+  assert.match(claude.hits[0].source, /^~\/\.claude\/projects\//u);
+  const kimi = await (await post({ q: "harbor", harness: "kimi" })).json();
+  assert.equal(kimi.hits.length, 2);
+  assert.equal(kimi.hits[0].harness, "kimi");
+  assert.equal(kimi.hits[0].session, "session_kimi_one");
+});
+
+test("the window steps are the only scope", async () => {
+  for (const step of ["4h", "24h", "3d", "7d", "30d"]) {
+    const response = await post({ q: "checkpoint", window: step });
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).coverage.window, step);
+  }
+  assert.equal((await post({ q: "checkpoint", window: "5h" })).status, 400);
+  assert.equal((await post({ q: "checkpoint", window: "90d" })).status, 400);
+  assert.equal((await post({ q: "checkpoint", window: 72 })).status, 400);
 });

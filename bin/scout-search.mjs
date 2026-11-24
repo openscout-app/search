@@ -3,15 +3,17 @@ import { spawn, spawnSync } from "node:child_process";
 import { parseArgs } from "node:util";
 import { createServer } from "../server/serve.mjs";
 import { indexStatus, readScope, scoutBin, search } from "../server/search.mjs";
+import { defaultWindow, findWindow, windows } from "../shared/windows.mjs";
 
+const steps = windows.map((entry) => entry.id).join("|");
 const help = [
   "Scout Search",
   "  scout-search [--port <n>] [--no-open]",
-  "  scout-search query <text> [--mode recent|index] [--harness claude|codex|kimi] [--hours <n>] [--json]",
+  `  scout-search query <text> [--mode recent|index] [--harness claude|codex|kimi] [--window ${steps}] [--json]`,
   "  scout-search status [--json]",
-  "  scout-search index [--harness claude|codex|kimi] [--hours <n>]",
+  `  scout-search index [--harness claude|codex|kimi] [--window ${steps}]`,
   "",
-  "Search the last 72 hours by default. Recent sessions work without setup.",
+  `Search the ${findWindow(defaultWindow).label.toLowerCase()} by default. Recent sessions work without setup.`,
   "The local index uses Scout's opt-in setting. Enable Local search index in Scout Settings > System before indexing.",
 ].join("\n");
 
@@ -53,7 +55,7 @@ async function main(argv) {
   if (argv.includes("--help") || argv.includes("-h")) return console.log(help);
   const command = argv[0] && !argv[0].startsWith("-") ? argv.shift() : "serve";
   const str = { type: "string" }, bool = { type: "boolean" };
-  const scope = { hours: str, harness: str };
+  const scope = { window: str, harness: str };
   const flags = { serve: { port: str, "no-open": bool }, status: { json: bool }, index: scope,
     query: { ...scope, mode: str, json: bool } };
   if (!Object.hasOwn(flags, command)) throw new Error("Unknown command. Run scout-search --help.");
@@ -67,8 +69,8 @@ async function main(argv) {
     return;
   }
   if (command === "index") {
-    const { harness, hours } = readScope(values);
-    const result = spawnSync(scoutBin(), ["search", "index", "--source", "sessions", "--hours", String(hours),
+    const { window, harness } = readScope(values);
+    const result = spawnSync(scoutBin(), ["search", "index", "--source", "sessions", "--hours", String(window.hours),
       ...(harness ? ["--harness", harness] : []), "--json"], { encoding: "utf8", stdio: ["ignore", "pipe", "inherit"], maxBuffer: 8 * 1024 * 1024 });
     if (result.error) throw result.error;
     if (result.status !== 0) {
@@ -87,7 +89,7 @@ async function main(argv) {
   const result = await search({ ...values, q: positionals.join(" ") });
   if (values.json) return console.log(JSON.stringify(result, null, 2));
   const c = result.coverage;
-  if (c.kind === "recent") console.log("Recent sessions · " + c.scannedFiles + " of " + c.candidates + " candidate files read" + (c.partial ? " · partial scan" : ""));
+  if (c.kind === "recent") console.log("Recent sessions · " + c.candidates + (c.candidates === 1 ? " transcript file" : " transcript files") + " read in the " + findWindow(result.window).label.toLowerCase() + (c.partial ? " · partial scan" : ""));
   else console.log(c.suggestion ?? ("Indexed coverage: " + c.kind + (c.stale ? " (stale)" : "")));
   console.log(result.hits.length + " matching passages returned.");
   for (const hit of result.hits) {

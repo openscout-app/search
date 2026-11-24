@@ -2,23 +2,23 @@ import { execFile } from "node:child_process";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { promisify } from "node:util";
-import { scanRecentSessionKnowledge } from "../vendor/recent.mjs";
+import { defaultWindow, findWindow, windowChoices } from "../shared/windows.mjs";
+import { scanRecent } from "./recent.mjs";
 
 const exec = promisify(execFile);
 export const harnesses = ["claude", "codex", "kimi"];
-export const fileLimit = 80;
-const hitLimit = 30;
+// The local index CLI returns at most 200 passages. Ask for its ceiling and
+// report when it binds; the in-place scan has no such ceiling.
+const indexHitCeiling = 200;
 
 export class InputError extends Error {}
 
 export function readScope(input) {
-  const hours = Number(input.hours ?? 72);
-  if (!Number.isInteger(hours) || hours < 1 || hours > 720) {
-    throw new InputError("Choose a window between 1 and 720 hours.");
-  }
+  const window = findWindow(input.window ?? defaultWindow);
+  if (!window) throw new InputError(`Choose ${windowChoices()}.`);
   const harness = input.harness || "";
   if (harness && !harnesses.includes(harness)) throw new InputError("Choose Claude Code, Codex or Kimi.");
-  return { hours, harness };
+  return { window, harness };
 }
 
 export function scoutBin() {
@@ -62,7 +62,7 @@ function presentHit(hit) {
 }
 
 export async function search(input, signal) {
-  const { harness, hours } = readScope(input);
+  const { window, harness } = readScope(input);
   const mode = input.mode ?? "recent";
   if (mode !== "recent" && mode !== "index") throw new InputError("Choose recent sessions or the local index.");
   const q = typeof input.q === "string" ? input.q.trim() : "";
@@ -70,19 +70,18 @@ export async function search(input, signal) {
     throw new InputError("Use at least one term of two characters and up to 300 characters in total.");
   }
   if (mode === "recent") {
-    const scan = await scanRecentSessionKnowledge({
-      q, harness: harness || undefined, signal, days: Math.ceil(hours / 24),
-      updatedAfterMs: Date.now() - hours * 3_600_000, fileLimit, limit: hitLimit,
-    });
-    return { mode, q, hits: scan.hits.map(presentHit), coverage: {
-      kind: "recent", scannedFiles: scan.scannedFiles, candidates: scan.totalFiles,
-      partial: scan.truncated || scan.totalFiles >= fileLimit, fileLimit,
+    const scan = await scanRecent({ q, hours: window.hours, harness: harness || undefined, signal });
+    return { mode, q, window: window.id, hits: scan.hits.map(presentHit), coverage: {
+      kind: "recent", window: window.id, scannedFiles: scan.scannedFiles, candidates: scan.candidates,
+      partial: scan.truncated,
     } };
   }
   // The indexed CLI treats dash-prefixed positional arguments as its own flags.
   if (q.startsWith("-")) throw new InputError("For a term beginning with a dash, use Recent sessions.");
-  const result = await scoutJson(["query", q, "--hours", String(hours), "--limit", String(hitLimit),
+  const result = await scoutJson(["query", q, "--hours", String(window.hours), "--limit", String(indexHitCeiling),
     ...(harness ? ["--harness", harness] : [])], signal);
   if (!Array.isArray(result.hits) || !result.coverage?.kind) throw new Error("Scout returned an unrecognized search result.");
-  return { mode, q, coverage: result.coverage, hits: result.hits.map(presentHit) };
+  return { mode, q, window: window.id, hits: result.hits.map(presentHit), coverage: {
+    ...result.coverage, partial: result.coverage.partial === true || result.hits.length >= indexHitCeiling,
+  } };
 }
