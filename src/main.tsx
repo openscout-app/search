@@ -1,5 +1,10 @@
 import { createRoot } from "react-dom/client";
-import { ScoutThinApp, type ScoutThinStatusBase } from "scout-app/shell";
+import {
+  ScoutThinApp,
+  SearchGlyph,
+  type ScoutPageTab,
+  type ScoutThinStatusBase,
+} from "scout-app/shell";
 import "scout-app/shell.css";
 import { SearchStandaloneSurface } from "./SearchStandaloneSurface.tsx";
 import "./search.css";
@@ -13,11 +18,17 @@ export interface SearchHostStatus extends ScoutThinStatusBase {
   recentTranscripts?: number;
 }
 
+const SEARCH_PAGES: readonly ScoutPageTab[] = [
+  { id: "search", label: "Search", route: "/", icon: SearchGlyph },
+];
+
 createRoot(document.getElementById("root")!).render(
   <ScoutThinApp<SearchHostStatus>
     product="Search"
     variant="search"
     rail="reading"
+    pages={SEARCH_PAGES}
+    chrome="sidebar"
     badge={(status) => {
       if (!status) return { label: "Scanning transcripts", tone: "loading" };
       if (status.enabled && (status.chunks ?? 0) > 0) {
