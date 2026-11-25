@@ -3,16 +3,48 @@
   "version": "0.1.0",
   "description": "Find the session where your coding agents discussed a change, ran a command, or made a decision.",
   "license": "Apache-2.0",
-  "repository": { "type": "git", "url": "git+https://github.com/openscout-app/search.git" },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/openscout-app/search.git"
+  },
   "type": "module",
   "exports": {
-    "./passages": { "types": "./ui/passages.d.ts", "import": "./ui/passages.jsx" },
+    "./passages": {
+      "types": "./ui/passages.d.ts",
+      "import": "./ui/passages.jsx"
+    },
     "./passages.css": "./ui/passages.css",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./surface": {
+      "types": "./ui/surface.d.ts",
+      "import": "./ui/surface.jsx"
+    },
+    "./coverage": {
+      "types": "./ui/coverage.d.ts",
+      "import": "./ui/coverage.js"
+    },
+    "./windows": {
+      "types": "./shared/windows.d.ts",
+      "import": "./shared/windows.mjs"
+    }
   },
-  "bin": { "scout-search": "bin/scout-search.mjs" },
-  "files": ["bin", "server", "public", "dist", "ui", "vendor", "docs/search.png", "NOTICE", "README.md"],
-  "engines": { "node": ">=20" },
+  "bin": {
+    "scout-search": "bin/scout-search.mjs"
+  },
+  "files": [
+    "bin",
+    "server",
+    "shared",
+    "public",
+    "dist",
+    "ui",
+    "docs/search.png",
+    "NOTICE",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "build": "node scripts/build-client.mjs",
     "prepare": "npm run build",
@@ -26,7 +58,15 @@
     "react": "19.2.3",
     "react-dom": "19.2.3"
   },
-  "peerDependencies": { "react": "^19.0.0" },
-  "peerDependenciesMeta": { "react": { "optional": true } },
-  "dependencies": { "@openscout/scout": "0.5.3" }
+  "peerDependencies": {
+    "react": "^19.0.0"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
+  },
+  "dependencies": {
+    "@openscout/scout": "0.5.3"
+  }
 }

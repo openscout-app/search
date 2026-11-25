@@ -1,22 +1,11 @@
 import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { HudButton, HudInput, HudSelect } from "hudsonkit/primitives";
-import { PassageList } from "../ui/passages.jsx";
+import { pageSize } from "../shared/pages.mjs";
+import { defaultWindow } from "../shared/windows.mjs";
+import { SearchSurface } from "../ui/surface.jsx";
 
 const harnessNames = { claude: "Claude Code", codex: "Codex", kimi: "Kimi" };
-const options = (rows) => rows.map(([value, label]) => ({ value, label }));
-const harnesses = options([["", "All"], ...Object.entries(harnessNames)]);
-const windows = options([
-  ["24", "Last 24 hours"],
-  ["72", "Last 3 days"],
-  ["168", "Last 7 days"],
-  ["720", "Last 30 days"],
-]);
-const modes = options([
-  ["recent", "Recent"],
-  ["index", "Local index"],
-]);
-const recentNote = "Recent search reads up to 80 transcript files on this host.";
+const recentNote = "Recent search reads every transcript updated in this window.";
 
 function referenceFor(hit) {
   const rows = [
@@ -100,111 +89,13 @@ function buildGroups(hits) {
   });
 }
 
-function coverageText(c, scope) {
-  switch (c.kind) {
-    case "recent":
-      return (
-        c.scannedFiles +
-        " of " +
-        c.candidates +
-        " candidate files read." +
-        (c.partial ? " Results cover part of the selected history." : "")
-      );
-    case "index_off":
-      return "Turn on Local search index in Scout Settings › System, then index the sessions you want to search.";
-    case "not_warmed":
-    case "empty_index":
-      return (
-        "Index this window from a terminal, then search again.\nnpx github:openscout-app/search index --hours " +
-        scope.hours +
-        (scope.harness ? " --harness " + scope.harness : "")
-      );
-    case "bounded":
-      return c.suggestion;
-    case "warmed":
-      return c.stale
-        ? "The index may be missing recent changes. Index this window again to refresh it."
-        : "Results cover sessions in the indexed window.";
-    default:
-      return "Scout did not report coverage for this window.";
-  }
-}
-
-function useKeys(input, results) {
-  useEffect(() => {
-    function press(e) {
-      const target = e.target,
-        key = e.key;
-      if (!(target instanceof HTMLElement) || e.isComposing || e.altKey) return;
-      const typing = target.matches("input,textarea,select,[contenteditable=true]");
-      if (
-        ((e.metaKey || e.ctrlKey) && key.toLowerCase() === "k") ||
-        (!e.metaKey && !e.ctrlKey && key === "/" && !typing)
-      ) {
-        e.preventDefault();
-        input.current.focus();
-        input.current.select();
-        return;
-      }
-      if (e.metaKey || e.ctrlKey || e.shiftKey) return;
-      const items = Array.from(results.current.querySelectorAll("summary"));
-      if (target === input.current && key === "ArrowDown" && items.length) {
-        e.preventDefault();
-        items[0].focus();
-        return;
-      }
-      const i = items.indexOf(target);
-      if (i < 0) return;
-      const detail = target.parentElement;
-      switch (key) {
-        case "j":
-        case "ArrowDown":
-          items[Math.min(items.length - 1, i + 1)].focus();
-          break;
-        case "k":
-        case "ArrowUp":
-          items[Math.max(0, i - 1)].focus();
-          break;
-        case "Home":
-          items[0].focus();
-          break;
-        case "End":
-          items.at(-1).focus();
-          break;
-        case "ArrowLeft":
-          detail.open = false;
-          break;
-        case "ArrowRight":
-          detail.open = true;
-          break;
-        case "c":
-          detail.open = true;
-          detail.querySelector(".sp-copy")?.click();
-          break;
-        case "Escape":
-          input.current.focus();
-          input.current.select();
-          break;
-        default:
-          return;
-      }
-      e.preventDefault();
-    }
-    document.addEventListener("keydown", press);
-    return () => document.removeEventListener("keydown", press);
-  }, [input, results]);
-}
-
 function App() {
-  const input = useRef(null),
-    form = useRef(null),
-    results = useRef(null),
-    pending = useRef(null);
+  const pending = useRef(null),
+    more = useRef(null);
   const [query, setQuery] = useState("");
-  const [scope, setScope] = useState({ mode: "recent", hours: "72", harness: "" });
-  const [scopeNote, setNote] = useState(recentNote);
+  const [scope, setScope] = useState({ mode: "recent", window: defaultWindow, harness: "" });
+  const [note, setNote] = useState(recentNote);
   const [view, setView] = useState({ state: "initial" });
-  useKeys(input, results);
   useEffect(() => {
     const media = matchMedia("(prefers-color-scheme: dark)");
     const sync = () => {
@@ -243,6 +134,7 @@ function App() {
 
   async function search(nextScope) {
     pending.current?.abort();
+    more.current?.abort();
     const controller = new AbortController();
     pending.current = controller;
     setView({ state: "pending" });
@@ -251,169 +143,77 @@ function App() {
         method: "POST",
         signal: controller.signal,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...nextScope, q: query }),
+        body: JSON.stringify({ ...nextScope, q: query, limit: pageSize }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error);
       if (!controller.signal.aborted)
-        setView({ state: "ready", data, scope: nextScope, groups: buildGroups(data.hits) });
+        setView({ state: "ready", data, scope: nextScope, hits: data.hits, groups: buildGroups(data.hits),
+          next: data.next, scanned: data.coverage.scannedFiles, morePending: false });
     } catch (error) {
       if (!controller.signal.aborted) setView({ state: "error", message: error.message });
     }
   }
-  function changeScope(name, value) {
-    const next = { ...scope, [name]: value };
+  async function loadMore() {
+    if (!view.next || view.morePending) return;
+    setView({ ...view, morePending: true, moreError: null });
+    const controller = new AbortController();
+    more.current = controller;
+    try {
+      const response = await fetch("/api/search", {
+        method: "POST",
+        signal: controller.signal,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...view.scope, q: view.data.q, limit: pageSize, after: view.next }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error);
+      if (controller.signal.aborted) return;
+      const hits = [...view.hits, ...data.hits];
+      setView({ ...view, hits, groups: buildGroups(hits), next: data.next,
+        scanned: (view.scanned ?? 0) + (data.coverage.scannedFiles ?? 0), morePending: false, moreError: null });
+    } catch (error) {
+      if (!controller.signal.aborted) setView({ ...view, morePending: false, moreError: error.message });
+    }
+  }
+  function changeScope(next) {
     setScope(next);
     if (view.state !== "initial" && query.trim()) search(next);
   }
+  function changeQuery(value) {
+    setQuery(value);
+    if (!value) {
+      pending.current?.abort();
+      more.current?.abort();
+      setView({ state: "initial" });
+    }
+  }
 
-  let title = "Find a passage",
-    message = "Enter words you remember from a session with Claude Code, Codex or Kimi.";
-  let coverage = false,
-    partial = false;
-  if (view.state === "pending") {
-    title = "Searching…";
-    message = "";
-  }
-  if (view.state === "error") {
-    title = "Search didn’t finish";
-    message = view.message;
-  }
-  if (view.state === "ready") {
-    const { hits, coverage: c } = view.data,
-      count = view.groups.length;
-    title =
-      hits.length +
-      (hits.length === 1 ? " passage in " : " passages in ") +
-      count +
-      (count === 1 ? " session" : " sessions");
-    if (c.kind === "index_off") title = "Local index is off";
-    else if (["empty_index", "not_warmed"].includes(c.kind)) title = "This window hasn’t been indexed";
-    else if (!count) title = "No matches in the searched history";
-    message = coverageText(c, view.scope);
-    coverage = c.kind === "recent" || count > 0;
-    partial = c.partial || c.stale || c.kind === "bounded";
-  }
+  const indexCommand =
+    "npx github:openscout-app/search index --window " +
+    scope.window +
+    (scope.harness ? " --harness " + scope.harness : "");
+
   return (
-    <div className="frame">
-      <aside aria-label="Search filters">
-        <header className="brand">
-          <span className="lens" aria-hidden="true" />
-          Scout Search
-        </header>
-        <div className="controls">
-          <fieldset id="sources">
-            <legend>Search in</legend>
-            {modes.map((m) => (
-              <label key={m.value}>
-                <input
-                  type="radio"
-                  name="mode"
-                  value={m.value}
-                  checked={scope.mode === m.value}
-                  onChange={() => changeScope("mode", m.value)}
-                />
-                {m.value === "recent" ? "Recent sessions" : m.label}
-              </label>
-            ))}
-          </fieldset>
-          <label className="filter compact-mode">
-            Search in
-            <HudSelect
-              id="compact-mode"
-              value={scope.mode}
-              options={modes}
-              onChange={(e) => changeScope("mode", e.target.value)}
-            />
-          </label>
-          <label className="filter">
-            Harness
-            <HudSelect
-              id="harness"
-              name="harness"
-              form="search-form"
-              value={scope.harness}
-              options={harnesses}
-              onChange={(e) => changeScope("harness", e.target.value)}
-            />
-          </label>
-          <label className="filter">
-            Sessions updated
-            <HudSelect
-              id="hours"
-              name="hours"
-              form="search-form"
-              value={scope.hours}
-              options={windows}
-              onChange={(e) => changeScope("hours", e.target.value)}
-            />
-          </label>
-        </div>
-        <p className="scope-note">{scopeNote}</p>
-      </aside>
-      <main>
-        <div className="workspace">
-          <header className="query-head">
-            <h1>Search sessions</h1>
-            <form
-              id="search-form"
-              ref={form}
-              role="search"
-              onSubmit={(e) => {
-                e.preventDefault();
-                search(scope);
-              }}
-            >
-              <div className="search-field">
-                <span className="lens" aria-hidden="true" />
-                <HudInput
-                  ref={input}
-                  id="query"
-                  name="q"
-                  type="search"
-                  aria-label="Search session transcripts"
-                  required
-                  maxLength={300}
-                  autoComplete="off"
-                  spellCheck={false}
-                  aria-keyshortcuts="/ Meta+k Control+k"
-                  placeholder="Search for a phrase or command"
-                  value={query}
-                  onChange={(e) => {
-                    setQuery(e.target.value);
-                    if (!e.target.value) {
-                      pending.current?.abort();
-                      setView({ state: "initial" });
-                    }
-                  }}
-                />
-                {!query && <kbd aria-hidden="true">/</kbd>}
-                <button type="submit" hidden aria-hidden="true" tabIndex={-1} />
-                <HudButton
-                  tone="accent"
-                  className="primary"
-                  variant="ghost"
-                  onClick={() => form.current.requestSubmit()}
-                >
-                  Search
-                </HudButton>
-              </div>
-            </form>
-          </header>
-          <section aria-label="Search results">
-            <div className="results-head" role="status" aria-atomic="true">
-              <h2>{title}</h2>
-              <p className={"message" + (coverage ? " coverage" : "") + (partial ? " partial" : "")}>
-                {message}
-              </p>
-            </div>
-            <div ref={results} aria-busy={view.state === "pending"}>
-              {view.state === "ready" && <PassageList groups={view.groups} query={view.data.q} />}
-            </div>
-          </section>
-        </div>
-      </main>
-    </div>
+    <SearchSurface
+      query={query}
+      onQueryChange={changeQuery}
+      onSubmit={() => search(scope)}
+      scope={scope}
+      onScopeChange={changeScope}
+      status={view.state}
+      error={view.state === "error" ? view.message : null}
+      note={note}
+      groups={view.state === "ready" ? view.groups : []}
+      coverage={view.state === "ready" ? view.data.coverage : null}
+      coverageOptions={{ indexCommand }}
+      next={view.state === "ready" ? view.next : null}
+      onLoadMore={loadMore}
+      loadingMore={view.morePending === true}
+      moreError={view.moreError ?? null}
+      highlightQuery={view.state === "ready" ? view.data.q : query}
+    />
   );
 }
+
 createRoot(document.getElementById("root")).render(<App />);

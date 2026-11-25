@@ -1,24 +1,86 @@
 import { execFile } from "node:child_process";
 import { createRequire } from "node:module";
+import { homedir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import { scanRecentSessionKnowledge } from "../vendor/recent.mjs";
+import { pageCap, pageSize } from "../shared/pages.mjs";
+import { defaultWindow, findWindow, windowChoices } from "../shared/windows.mjs";
+import { scanRecent } from "./recent.mjs";
 
 const exec = promisify(execFile);
 export const harnesses = ["claude", "codex", "kimi"];
-export const fileLimit = 80;
-const hitLimit = 30;
-
 export class InputError extends Error {}
 
 export function readScope(input) {
-  const hours = Number(input.hours ?? 72);
-  if (!Number.isInteger(hours) || hours < 1 || hours > 720) {
-    throw new InputError("Choose a window between 1 and 720 hours.");
-  }
+  const window = findWindow(input.window ?? defaultWindow);
+  if (!window) throw new InputError(`Choose ${windowChoices()}.`);
   const harness = input.harness || "";
   if (harness && !harnesses.includes(harness)) throw new InputError("Choose Claude Code, Codex or Kimi.");
-  return { hours, harness };
+  return { window, harness };
+}
+
+export function readLimit(input) {
+  const limit = input.limit == null ? pageSize : Number(input.limit);
+  if (!Number.isInteger(limit) || limit < 1 || limit > pageCap) {
+    throw new InputError(`Choose between 1 and ${pageCap} passages per page.`);
+  }
+  return limit;
+}
+
+function cursorPath(file) {
+  const home = homedir();
+  const rel = path.relative(home, file.path);
+  if (rel && !rel.startsWith("..") && !rel.startsWith(path.sep)) return { root: "HOME", relPath: rel, mtimeMs: file.mtimeMs };
+  return { root: "ABSOLUTE", relPath: file.path, mtimeMs: file.mtimeMs };
+}
+
+function absolutePath(at) {
+  return at.root === "HOME" ? path.join(homedir(), at.relPath) : at.relPath;
+}
+
+function encodeCursor(value) {
+  return Buffer.from(JSON.stringify(value)).toString("base64url");
+}
+
+function decodeCursor(input, scope) {
+  if (input.after == null || input.after === "") return null;
+  let value;
+  try {
+    if (typeof input.after !== "string" || input.after.length > 2048) throw new Error();
+    value = JSON.parse(Buffer.from(input.after, "base64url").toString("utf8"));
+  } catch {
+    throw new InputError("That page is not valid.");
+  }
+  const at = value?.at;
+  if (value?.v !== 1 || (at?.root !== "HOME" && at?.root !== "ABSOLUTE")
+    || typeof at?.relPath !== "string" || !at.relPath || !Number.isFinite(at?.mtimeMs)) {
+    throw new InputError("That page is not valid.");
+  }
+  if (value.q !== scope.q || value.window !== scope.window || (value.harness || "") !== (scope.harness || "")) {
+    throw new InputError("That page belongs to another search.");
+  }
+  return { path: absolutePath(at), mtimeMs: at.mtimeMs };
+}
+
+// The local index pages through the core query's own token. Check that it is
+// well formed and belongs to this search here, so a bad page is a 400 rather
+// than a CLI failure reported as an unavailable install.
+function readIndexPage(input, scope) {
+  if (input.after == null || input.after === "") return null;
+  let value;
+  try {
+    if (typeof input.after !== "string" || input.after.length > 2048) throw new Error();
+    value = JSON.parse(Buffer.from(input.after, "base64url").toString("utf8"));
+  } catch {
+    throw new InputError("That page is not valid.");
+  }
+  const harness = Array.isArray(value?.harness) ? value.harness.join(",") : null;
+  if (value?.v !== 1 || (value.ftsMode !== "and" && value.ftsMode !== "or")
+    || value.q !== scope.q || value.hours !== scope.hours || harness !== (scope.harness || "")
+    || (value.project ?? null) !== null) {
+    throw new InputError("That page belongs to another search.");
+  }
+  return input.after;
 }
 
 export function scoutBin() {
@@ -62,7 +124,7 @@ function presentHit(hit) {
 }
 
 export async function search(input, signal) {
-  const { harness, hours } = readScope(input);
+  const { window, harness } = readScope(input);
   const mode = input.mode ?? "recent";
   if (mode !== "recent" && mode !== "index") throw new InputError("Choose recent sessions or the local index.");
   const q = typeof input.q === "string" ? input.q.trim() : "";
@@ -70,19 +132,26 @@ export async function search(input, signal) {
     throw new InputError("Use at least one term of two characters and up to 300 characters in total.");
   }
   if (mode === "recent") {
-    const scan = await scanRecentSessionKnowledge({
-      q, harness: harness || undefined, signal, days: Math.ceil(hours / 24),
-      updatedAfterMs: Date.now() - hours * 3_600_000, fileLimit, limit: hitLimit,
-    });
-    return { mode, q, hits: scan.hits.map(presentHit), coverage: {
-      kind: "recent", scannedFiles: scan.scannedFiles, candidates: scan.totalFiles,
-      partial: scan.truncated || scan.totalFiles >= fileLimit, fileLimit,
+    const limit = readLimit(input);
+    const scope = { q, window: window.id, harness };
+    const cursor = decodeCursor(input, scope);
+    const scan = await scanRecent({ q, hours: window.hours, harness: harness || undefined, limit, cursor, signal });
+    return { mode, q, window: window.id, limit, hits: scan.hits.map(presentHit), next: scan.next
+      ? encodeCursor({ v: 1, ...scope, at: cursorPath(scan.next) })
+      : null, coverage: {
+      kind: "recent", window: window.id, scannedFiles: scan.scannedFiles, candidates: scan.candidates,
+      partial: scan.truncated,
     } };
   }
   // The indexed CLI treats dash-prefixed positional arguments as its own flags.
   if (q.startsWith("-")) throw new InputError("For a term beginning with a dash, use Recent sessions.");
-  const result = await scoutJson(["query", q, "--hours", String(hours), "--limit", String(hitLimit),
-    ...(harness ? ["--harness", harness] : [])], signal);
+  const limit = readLimit(input);
+  const page = readIndexPage(input, { q, hours: window.hours, harness });
+  const result = await scoutJson(["query", q, "--hours", String(window.hours), "--limit", String(limit),
+    ...(harness ? ["--harness", harness] : []), ...(page ? ["--after", page] : [])], signal);
   if (!Array.isArray(result.hits) || !result.coverage?.kind) throw new Error("Scout returned an unrecognized search result.");
-  return { mode, q, coverage: result.coverage, hits: result.hits.map(presentHit) };
+  return { mode, q, window: window.id, limit, hits: result.hits.map(presentHit),
+    next: typeof result.next === "string" ? result.next : null, coverage: {
+      ...result.coverage, partial: result.coverage.partial === true,
+    } };
 }

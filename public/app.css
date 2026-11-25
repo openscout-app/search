@@ -106,3 +106,5 @@ mark { color: var(--hud-ink); background: color-mix(in srgb, var(--hud-accent) 2
 .search-field input { width: 100%; }
 .sp-summary { cursor: pointer; }
 .sp-copy { color: var(--hud-accent); }
+.more { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; padding: 18px 0 4px; }
+.more .primary { border: 1px solid var(--hud-line); padding: 8px 16px; }
