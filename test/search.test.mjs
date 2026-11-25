@@ -6,9 +6,17 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { createServer } from "../server/serve.mjs";
+import { scoutBin } from "../server/search.mjs";
 
 const exec = promisify(execFile);
 let home, env, server, url, roots;
+// Ask the CLI the app will actually use whether it can continue an index page.
+// This runs before the test home replaces the environment, and before the test
+// definitions below read the answer.
+let pagesSupported = false;
+try {
+  pagesSupported = (await exec(scoutBin(), ["search", "query", "--help"])).stdout.includes("--after");
+} catch {}
 const previous = new Map();
 const cli = (...args) => exec(process.execPath, ["bin/scout-search.mjs", ...args], { env });
 const post = (query, headers = {}) => fetch(url + "/api/search", {
@@ -155,6 +163,51 @@ test("a window search pages through every transcript in the window", async () =>
   assert.equal((await post({ q: "batchmarker", limit: 0 })).status, 400);
   assert.equal((await post({ q: "batchmarker", limit: 501 })).status, 400);
   assert.equal((await post({ q: "batchmarker", mode: "index", after: small.next })).status, 400);
+});
+
+test("the local index pages with the token it returned", {
+  skip: pagesSupported ? false : "needs @openscout/scout with search query --after",
+}, async () => {
+  // This test owns the opt-in it depends on, so it also runs alone.
+  await writeFile(join(roots.OPENSCOUT_SUPPORT_DIRECTORY, "settings.json"), JSON.stringify({ knowledgeIndexEnabled: true }));
+  const dir = join(roots.OPENSCOUT_TAIL_CODEX_SESSIONS_ROOT, "2026/03/01");
+  await mkdir(dir, { recursive: true });
+  const rows = [{ type: "session_meta", payload: { id: "index-pages", cwd: "/work/pages" } }];
+  for (let index = 0; index < 5; index++) {
+    rows.push({ type: "response_item", payload: { type: "message", role: "assistant",
+      content: [{ type: "output_text", text: `pageword passage ${index}` }] } });
+  }
+  // Each session is chunked separately, so several files give the index
+  // enough passages to page through.
+  for (let file = 0; file < 3; file++) {
+    await writeFile(join(dir, `rollout-index-pages-${file}.jsonl`),
+      [{ type: "session_meta", payload: { id: `index-pages-${file}`, cwd: `/work/pages-${file}` } },
+        ...rows.slice(1)].map((row) => JSON.stringify(row)).join("\n") + "\n");
+  }
+  await cli("index", "--window", "3d", "--harness", "codex");
+
+  const key = (hit) => `${hit.session}:${hit.source}:${(hit.records ?? []).join("-")}:${hit.excerpt}`;
+  const single = await (await post({ q: "pageword", mode: "index", harness: "codex", limit: 500 })).json();
+  assert.ok(single.hits.length >= 4);
+  assert.equal(single.next, null);
+
+  const collected = [];
+  let after;
+  let pages = 0;
+  for (;;) {
+    const page = await (await post({ q: "pageword", mode: "index", harness: "codex", limit: 2, ...(after ? { after } : {}) })).json();
+    pages++;
+    collected.push(...page.hits.map(key));
+    if (!page.next) break;
+    after = page.next;
+  }
+  assert.ok(pages > 1, "the page token continued the search");
+  assert.deepEqual(collected.sort(), single.hits.map(key).sort());
+  assert.equal(typeof after, "string");
+
+  assert.equal((await post({ q: "otherword", mode: "index", harness: "codex", after: after })).status, 400);
+  assert.equal((await post({ q: "pageword", mode: "index", harness: "codex", window: "30d", after: after })).status, 400);
+  assert.equal((await post({ q: "pageword", mode: "index", after: "not-a-page" })).status, 400);
 });
 
 test("returns every matching passage in one session", async () => {

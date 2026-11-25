@@ -9,10 +9,6 @@ import { scanRecent } from "./recent.mjs";
 
 const exec = promisify(execFile);
 export const harnesses = ["claude", "codex", "kimi"];
-// The local index CLI returns at most 200 passages. Ask for its ceiling and
-// report when it binds; the in-place scan has no such ceiling.
-const indexHitCeiling = 200;
-
 export class InputError extends Error {}
 
 export function readScope(input) {
@@ -64,6 +60,27 @@ function decodeCursor(input, scope) {
     throw new InputError("That page belongs to another search.");
   }
   return { path: absolutePath(at), mtimeMs: at.mtimeMs };
+}
+
+// The local index pages through the core query's own token. Check that it is
+// well formed and belongs to this search here, so a bad page is a 400 rather
+// than a CLI failure reported as an unavailable install.
+function readIndexPage(input, scope) {
+  if (input.after == null || input.after === "") return null;
+  let value;
+  try {
+    if (typeof input.after !== "string" || input.after.length > 2048) throw new Error();
+    value = JSON.parse(Buffer.from(input.after, "base64url").toString("utf8"));
+  } catch {
+    throw new InputError("That page is not valid.");
+  }
+  const harness = Array.isArray(value?.harness) ? value.harness.join(",") : null;
+  if (value?.v !== 1 || (value.ftsMode !== "and" && value.ftsMode !== "or")
+    || value.q !== scope.q || value.hours !== scope.hours || harness !== (scope.harness || "")
+    || (value.project ?? null) !== null) {
+    throw new InputError("That page belongs to another search.");
+  }
+  return input.after;
 }
 
 export function scoutBin() {
@@ -126,13 +143,15 @@ export async function search(input, signal) {
       partial: scan.truncated,
     } };
   }
-  if (input.after != null && input.after !== "") throw new InputError("The local index cannot continue a page. Narrow the window instead.");
   // The indexed CLI treats dash-prefixed positional arguments as its own flags.
   if (q.startsWith("-")) throw new InputError("For a term beginning with a dash, use Recent sessions.");
-  const result = await scoutJson(["query", q, "--hours", String(window.hours), "--limit", String(indexHitCeiling),
-    ...(harness ? ["--harness", harness] : [])], signal);
+  const limit = readLimit(input);
+  const page = readIndexPage(input, { q, hours: window.hours, harness });
+  const result = await scoutJson(["query", q, "--hours", String(window.hours), "--limit", String(limit),
+    ...(harness ? ["--harness", harness] : []), ...(page ? ["--after", page] : [])], signal);
   if (!Array.isArray(result.hits) || !result.coverage?.kind) throw new Error("Scout returned an unrecognized search result.");
-  return { mode, q, window: window.id, limit: indexHitCeiling, hits: result.hits.map(presentHit), next: null, coverage: {
-    ...result.coverage, partial: result.coverage.partial === true || result.hits.length >= indexHitCeiling,
-  } };
+  return { mode, q, window: window.id, limit, hits: result.hits.map(presentHit),
+    next: typeof result.next === "string" ? result.next : null, coverage: {
+      ...result.coverage, partial: result.coverage.partial === true,
+    } };
 }

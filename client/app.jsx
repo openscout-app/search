@@ -121,7 +121,7 @@ function coverageText(c, scope) {
     case "bounded":
       return c.suggestion;
     case "warmed":
-      if (c.partial) return "The local index stops at 200 passages. Narrow the window to see the rest.";
+      if (c.partial) return "Results cover part of the window.";
       return c.stale
         ? "The index may be missing recent changes. Index this window again to refresh it."
         : "Results cover sessions in the indexed window.";

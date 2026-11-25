@@ -9,7 +9,7 @@ const steps = windows.map((entry) => entry.id).join("|");
 const help = [
   "Scout Search",
   "  scout-search [--port <n>] [--no-open]",
-  `  scout-search query <text> [--mode recent|index] [--harness claude|codex|kimi] [--window ${steps}] [--json]`,
+  `  scout-search query <text> [--mode recent|index] [--harness claude|codex|kimi] [--window ${steps}] [--limit N] [--after <page>] [--json]`,
   "  scout-search status [--json]",
   `  scout-search index [--harness claude|codex|kimi] [--window ${steps}]`,
   "",
