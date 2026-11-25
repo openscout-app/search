@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { after, before, test } from "node:test";
 import { mkdtemp, mkdir, rm, writeFile, access } from "node:fs/promises";
@@ -31,6 +32,7 @@ before(async () => {
     OPENSCOUT_TAIL_CODEX_SESSIONS_ROOT: join(home, ".codex/sessions"),
     OPENSCOUT_TAIL_CLAUDE_PROJECTS_ROOT: join(home, ".claude/projects"),
     OPENSCOUT_TAIL_KIMI_SESSIONS_ROOT: join(home, ".kimi-code/sessions"),
+    OPENSCOUT_TAIL_ANTIGRAVITY_BRAIN_ROOT: join(home, "antigravity-test-brain"),
   };
   for (const [key, value] of Object.entries(paths)) {
     previous.set(key, process.env[key]);
@@ -111,6 +113,10 @@ test("accepts only local API traffic and bounded queries", async () => {
 test("serves the built Search controls and theme from the same local origin", async () => {
   const page = await fetch(url);
   const html = await page.text();
+  assert.match(html, /<div id="root">\s*<div data-scout-boot="search">[\s\S]*Scout Search[\s\S]*Recent transcripts/u);
+  const critical = /<style>([\s\S]*?)<\/style>/u.exec(html)[1];
+  const hash = createHash("sha256").update(critical).digest("base64");
+  assert.ok(page.headers.get("content-security-policy").includes(`style-src 'self' 'sha256-${hash}'`));
   for (const [path, mime, marker] of [
     ["/app.js", "text/javascript", "Copy reference"],
     ["/app.css", "text/css", "--hud-ink"],
@@ -250,6 +256,33 @@ test("reads Claude Code and Kimi transcripts", async () => {
   assert.equal(kimi.hits.length, 2);
   assert.equal(kimi.hits[0].harness, "kimi");
   assert.equal(kimi.hits[0].session, "session_kimi_one");
+});
+
+test("searches Antigravity conversations and CLI transcript logs", async () => {
+  const desktop = join(home, ".gemini", "antigravity", "conversations");
+  const brain = join(roots.OPENSCOUT_TAIL_ANTIGRAVITY_BRAIN_ROOT, "cli-session", ".system_generated", "logs");
+  await mkdir(desktop, { recursive: true });
+  await mkdir(brain, { recursive: true });
+  const rows = [
+    { step_index: 0, type: "SYSTEM_MESSAGE", content: "moonstone system instructions" },
+    { step_index: 1, type: "USER_INPUT", content: "Find the moonstone cache" },
+    { step_index: 2, type: "PLANNER_RESPONSE", content: "The moonstone cache is ready", thinking: "private notes" },
+  ];
+  const jsonl = (records) => records.map((row) => JSON.stringify(row)).join("\n") + "\n";
+  await writeFile(join(brain, "transcript.jsonl"), jsonl(rows));
+  await writeFile(join(brain, "other.jsonl"), jsonl(rows));
+  await writeFile(join(desktop, "desktop-session.jsonl"), jsonl(rows.slice(1, 2)));
+
+  const response = await post({ q: "moonstone", harness: "antigravity" });
+  assert.equal(response.status, 200);
+  const { hits, coverage } = await response.json();
+  assert.equal(coverage.candidates, 2);
+  assert.equal(hits.length, 3);
+  assert.ok(hits.every((hit) => hit.harness === "antigravity"));
+  assert.ok(hits.some((hit) => hit.session === "desktop-session"));
+  const cliHit = hits.find((hit) => hit.session === "cli-session" && hit.excerpt === rows[2].content);
+  assert.deepEqual(cliHit?.records, [2, 2]);
+  assert.equal(cliHit?.source, "~/antigravity-test-brain/cli-session/.system_generated/logs/transcript.jsonl");
 });
 
 test("the window steps are the only scope", async () => {

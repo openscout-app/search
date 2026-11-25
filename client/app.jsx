@@ -4,7 +4,8 @@ import { pageSize } from "../shared/pages.mjs";
 import { defaultWindow } from "../shared/windows.mjs";
 import { SearchSurface } from "../ui/surface.jsx";
 
-const harnessNames = { claude: "Claude Code", codex: "Codex", kimi: "Kimi" };
+const harnessNames = { claude: "Claude Code", codex: "Codex", kimi: "Kimi", antigravity: "Antigravity" };
+const harnessMarks = { claude: "Cl", codex: "CX", kimi: "Ki", antigravity: "AG" };
 const recentNote = "Recent search reads every transcript updated in this window.";
 
 function referenceFor(hit) {
@@ -44,8 +45,15 @@ function formatUpdated(updatedAt) {
 function SessionHeader({ hit, sessionName, stamp }) {
   return (
     <div className="context">
-      <h3>{hit.project || hit.session || hit.title}</h3>
-      <span>{harnessNames[hit.harness] || hit.harness}</span>
+      <h3>
+        {harnessMarks[hit.harness] && (
+          <span className="harness-plate" aria-hidden="true" title={harnessNames[hit.harness]}>
+            {harnessMarks[hit.harness]}
+          </span>
+        )}
+        <span>{hit.project || hit.session || hit.title}</span>
+      </h3>
+      <span className="session-harness">{harnessNames[hit.harness] || hit.harness}</span>
       {stamp && (
         <time dateTime={stamp.dateTime} title={stamp.title}>
           {stamp.text}
@@ -89,43 +97,42 @@ function buildGroups(hits) {
   });
 }
 
+function Masthead({ status }) {
+  return (
+    <header className="search-masthead">
+      <div className="search-rail search-masthead-inner">
+        <span className="search-brand">
+          <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
+            <path d="M9 1 16 5v8l-7 4-7-4V5Z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+            <path d="M9 4.43 13 6.71v4.58L9 13.57 5 11.29V6.71Z" fill="currentColor" />
+          </svg>
+          Scout Search
+        </span>
+        <span className="search-status" role="status">{status}</span>
+      </div>
+    </header>
+  );
+}
+
 function App() {
   const pending = useRef(null),
     more = useRef(null);
   const [query, setQuery] = useState("");
   const [scope, setScope] = useState({ mode: "recent", window: defaultWindow, harness: "" });
-  const [note, setNote] = useState(recentNote);
+  const [index, setIndex] = useState({ state: "checking" });
   const [view, setView] = useState({ state: "initial" });
   useEffect(() => {
-    const media = matchMedia("(prefers-color-scheme: dark)");
-    const sync = () => {
-      document.documentElement.dataset.hudsonTheme = media.matches ? "dark" : "light";
-    };
-    sync();
-    media.addEventListener("change", sync);
-    return () => media.removeEventListener("change", sync);
-  }, []);
-  useEffect(() => {
-    if (scope.mode === "recent") {
-      setNote(recentNote);
-      return;
-    }
+    if (scope.mode !== "index") return;
     const controller = new AbortController();
-    setNote("Checking the local index…");
     (async () => {
       try {
         const r = await fetch("/api/status", { signal: controller.signal });
         if (!r.ok) throw new Error();
         const status = await r.json();
         if (!controller.signal.aborted)
-          setNote(
-            status.enabled
-              ? status.chunks.toLocaleString() + " passages in the local index."
-              : "The local index is off on this host.",
-          );
+          setIndex({ state: !status.enabled ? "off" : status.chunks > 0 && status.lastIndexedAt ? "warmed" : "unwarmed" });
       } catch {
-        if (!controller.signal.aborted)
-          setNote("Index unavailable. Run scout-search status to check the installation.");
+        if (!controller.signal.aborted) setIndex({ state: "unavailable" });
       }
     })();
     return () => controller.abort();
@@ -177,6 +184,7 @@ function App() {
     }
   }
   function changeScope(next) {
+    if (next.mode === "index" && scope.mode !== "index") setIndex({ state: "checking" });
     setScope(next);
     if (view.state !== "initial" && query.trim()) search(next);
   }
@@ -194,6 +202,24 @@ function App() {
     scope.window +
     (scope.harness ? " --harness " + scope.harness : "");
 
+  const coverage = view.state === "ready" ? view.data.coverage : null;
+  const indexState = coverage?.kind === "index_off" ? "off"
+    : ["empty_index", "not_warmed"].includes(coverage?.kind) ? "unwarmed"
+    : coverage?.kind === "warmed" ? "warmed" : index.state;
+  const indexLabels = {
+    checking: "Checking index…",
+    off: "Index off",
+    unwarmed: "Index not warmed",
+    unavailable: "Index unavailable",
+    warmed: "Index warmed",
+  };
+  const indexNotes = {
+    off: "Turn on Local search index in Scout Settings › System. Recent search still reads transcripts directly.",
+    unwarmed: "Index the sessions you want to search from a terminal.",
+    unavailable: "Run scout-search status in a terminal to check the local index.",
+  };
+  const note = scope.mode === "recent" ? recentNote : indexNotes[indexState];
+
   return (
     <SearchSurface
       query={query}
@@ -203,9 +229,10 @@ function App() {
       onScopeChange={changeScope}
       status={view.state}
       error={view.state === "error" ? view.message : null}
+      masthead={<Masthead status={scope.mode === "recent" ? "Recent transcripts" : indexLabels[indexState]} />}
       note={note}
       groups={view.state === "ready" ? view.groups : []}
-      coverage={view.state === "ready" ? view.data.coverage : null}
+      coverage={coverage}
       coverageOptions={{ indexCommand }}
       next={view.state === "ready" ? view.next : null}
       onLoadMore={loadMore}

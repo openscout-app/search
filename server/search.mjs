@@ -8,14 +8,14 @@ import { defaultWindow, findWindow, windowChoices } from "../shared/windows.mjs"
 import { scanRecent } from "./recent.mjs";
 
 const exec = promisify(execFile);
-export const harnesses = ["claude", "codex", "kimi"];
+export const harnesses = ["claude", "codex", "kimi", "antigravity"];
 export class InputError extends Error {}
 
 export function readScope(input) {
   const window = findWindow(input.window ?? defaultWindow);
   if (!window) throw new InputError(`Choose ${windowChoices()}.`);
   const harness = input.harness || "";
-  if (harness && !harnesses.includes(harness)) throw new InputError("Choose Claude Code, Codex or Kimi.");
+  if (harness && !harnesses.includes(harness)) throw new InputError("Choose Claude Code, Codex, Kimi or Antigravity.");
   return { window, harness };
 }
 

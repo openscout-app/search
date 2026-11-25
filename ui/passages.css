@@ -6,3 +6,41 @@
 .sp-copy-hint { flex-basis: 100%; }
 .sp-manual-copy { width: 100%; resize: vertical; }
 .sp-sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+
+.sp-excerpt, .sp-title { font-size: 14px; line-height: 1.5; }
+.sp-title { margin: 0; font-weight: 500; }
+.sp-passage + .sp-passage { margin-top: 4px; }
+.sp-summary {
+  display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; gap: 6px;
+  padding: 4px; border-radius: 4px;
+}
+.sp-summary::-webkit-details-marker { display: none; }
+.sp-summary::before {
+  content: ""; width: 6px; height: 6px; margin-top: 7px; box-sizing: border-box;
+  border-right: 1px solid currentColor; border-top: 1px solid currentColor;
+  color: var(--hud-muted, currentColor); transform: rotate(45deg);
+}
+.sp-passage[open] > .sp-summary::before { transform: rotate(135deg); }
+.sp-summary:hover, .sp-summary:focus-visible { background: var(--hud-bg, transparent); }
+.sp-disclosure { color: var(--hud-muted, currentColor); font-size: 12px; }
+.sp-excerpt mark {
+  border-radius: 2px; color: inherit;
+  background: color-mix(in srgb, var(--hud-accent, #e8a33d) 27%, transparent); font-weight: 500;
+}
+.sp-source {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px;
+  margin: 4px 4px 8px 20px; padding-top: 4px; border-top: 1px solid var(--hud-line, currentColor);
+  color: var(--hud-muted, currentColor); font: 11px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+}
+.sp-coords { display: flex; flex: 1 1 210px; flex-wrap: wrap; align-items: baseline; min-width: 0; gap: 2px 8px; }
+.sp-copy {
+  margin-left: auto; padding: 0 4px; min-height: 28px; border: 0; border-radius: 4px;
+  background: transparent; color: var(--search-action-ink, var(--hud-ink, currentColor));
+  font: 500 12px/1.2 system-ui, sans-serif;
+}
+.sp-copy:hover { text-decoration: underline; }
+.sp-manual-copy {
+  background: var(--hud-bg, transparent); color: inherit; border: 1px solid var(--hud-line, currentColor);
+  padding: 6px; font: inherit;
+}

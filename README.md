@@ -2,6 +2,8 @@
 
 Find the session where you discussed a change, ran a command or made a decision. Search reads Claude Code, Codex and Kimi transcripts on this host, including sessions started outside Scout. Expand a passage to see its session ID, transcript path and record range. **Copy reference** takes those coordinates back to your editor or agent.
 
+Recent search also reads Antigravity JSONL conversation exports and Antigravity CLI transcript logs. Binary conversation files are not searchable. Indexed harness support depends on the installed Scout CLI.
+
 ![Scout Search showing four matching passages across three example sessions. One passage is expanded to show its source.](docs/search.png)
 
 ## Run it

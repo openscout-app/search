@@ -1,5 +1,4 @@
-import { useEffect, useRef } from "react";
-import { HudButton, HudInput, HudSelect } from "hudsonkit/primitives";
+import { useEffect, useId, useRef } from "react";
 import { coverageNote } from "./coverage.js";
 import { PassageList } from "./passages.jsx";
 import { defaultWindow, findWindow, windows } from "../shared/windows.mjs";
@@ -14,6 +13,7 @@ export const searchHarnesses = [
   { value: "claude", label: "Claude Code" },
   { value: "codex", label: "Codex" },
   { value: "kimi", label: "Kimi" },
+  { value: "antigravity", label: "Antigravity" },
 ];
 
 export const searchWindowOptions = windows.map((entry) => ({ value: entry.id, label: entry.label }));
@@ -88,6 +88,29 @@ function useKeys(input, results) {
   }, [input, results]);
 }
 
+function Segments({ label, name, value, choices, onChange }) {
+  const group = useId();
+  return (
+    <fieldset className="search-filter">
+      <legend>{label}</legend>
+      <div className="search-segments">
+        {choices.map((choice) => (
+          <label key={choice.value}>
+            <input
+              type="radio"
+              name={name + group}
+              value={choice.value}
+              checked={value === choice.value}
+              onChange={() => onChange(choice.value)}
+            />
+            <span>{choice.label}</span>
+          </label>
+        ))}
+      </div>
+    </fieldset>
+  );
+}
+
 /**
  * The search page, composed from its parts. Data and callbacks come in; nothing
  * here knows about the app's fetch layer or state.
@@ -104,6 +127,7 @@ export function SearchSurface({
   status,
   error,
   note,
+  masthead,
   groups,
   selectedId,
   coverage,
@@ -113,7 +137,7 @@ export function SearchSurface({
   loadingMore = false,
   moreError,
   emptyTitle = "Find a passage",
-  emptyMessage = "Enter words you remember from a session with Claude Code, Codex or Kimi.",
+  emptyMessage = "Enter words you remember from a session with Claude Code, Codex, Kimi or Antigravity.",
   heading = "Search sessions",
   highlightQuery,
 }) {
@@ -156,55 +180,10 @@ export function SearchSurface({
   }
 
   return (
-    <div className="frame">
-      <aside aria-label="Search filters">
-        <header className="brand">
-          <span className="lens" aria-hidden="true" />
-          Scout Search
-        </header>
-        <div className="controls">
-          <fieldset id="sources">
-            <legend>Search in</legend>
-            {modes.map((mode) => (
-              <label key={mode.value}>
-                <input
-                  type="radio"
-                  name="mode"
-                  value={mode.value}
-                  checked={scope.mode === mode.value}
-                  onChange={() => onScopeChange({ ...scope, mode: mode.value })}
-                />
-                {mode.label}
-              </label>
-            ))}
-          </fieldset>
-          <label className="filter">
-            Harness
-            <HudSelect
-              id="harness"
-              name="harness"
-              form="search-form"
-              value={scope.harness}
-              options={[...harnesses]}
-              onChange={(e) => onScopeChange({ ...scope, harness: e.target.value })}
-            />
-          </label>
-          <label className="filter">
-            Sessions updated
-            <HudSelect
-              id="window"
-              name="window"
-              form="search-form"
-              value={scope.window}
-              options={[...windowChoices]}
-              onChange={(e) => onScopeChange({ ...scope, window: e.target.value })}
-            />
-          </label>
-        </div>
-        {note ? <p className="scope-note">{note}</p> : null}
-      </aside>
+    <div className="frame search-frame">
+      {masthead ?? <header className="search-masthead"><div className="search-rail search-masthead-inner">Scout Search</div></header>}
       <main>
-        <div className="workspace">
+        <div className="workspace search-rail">
           <header className="query-head">
             <h1>{heading}</h1>
             <form
@@ -217,7 +196,7 @@ export function SearchSurface({
             >
               <div className="search-field">
                 <span className="lens" aria-hidden="true" />
-                <HudInput
+                <input
                   ref={input}
                   id="query"
                   name="q"
@@ -233,18 +212,27 @@ export function SearchSurface({
                   onChange={(e) => onQueryChange(e.target.value)}
                 />
                 {!query && <kbd aria-hidden="true">/</kbd>}
-                <button type="submit" hidden aria-hidden="true" tabIndex={-1} />
-                <HudButton
-                  tone="accent"
-                  className="primary"
-                  variant="ghost"
-                  onClick={onSubmit}
-                >
-                  Search
-                </HudButton>
+                <button type="submit" className="primary">Search</button>
               </div>
             </form>
           </header>
+          <aside className="controls" aria-label="Search filters">
+            {[
+              ["mode", "Search in", modes],
+              ["window", "Sessions updated", windowChoices],
+              ["harness", "Harness", harnesses],
+            ].map(([key, label, choices]) => (
+              <Segments
+                key={key}
+                label={label}
+                name={key}
+                value={scope[key]}
+                choices={choices}
+                onChange={(value) => onScopeChange({ ...scope, [key]: value })}
+              />
+            ))}
+          </aside>
+          {note ? <p className="scope-note" role="status">{note}</p> : null}
           <section aria-label="Search results">
             <div className="results-head" role="status" aria-atomic="true">
               <h2>{title}</h2>
@@ -258,14 +246,14 @@ export function SearchSurface({
                   <PassageList groups={groups} query={highlightQuery ?? query} selectedId={selectedId} />
                   {next && (
                     <div className="more">
-                      <HudButton
-                        variant="ghost"
+                      <button
+                        type="button"
                         className="primary"
                         onClick={onLoadMore}
                         disabled={loadingMore}
                       >
                         {loadingMore ? "Loading…" : "Show more passages"}
-                      </HudButton>
+                      </button>
                       {moreError && <span className="message partial">{moreError}</span>}
                     </div>
                   )}

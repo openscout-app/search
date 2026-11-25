@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import http from "node:http";
 import { readFile } from "node:fs/promises";
 import { InputError, indexStatus, search } from "./search.mjs";
@@ -59,6 +60,15 @@ export function createServer() {
       const asset = assets.get(pathname);
       if (req.method === "GET" && asset) {
         const data = await readFile(new URL(asset[0], packageRoot));
+        if (pathname === "/") {
+          // Allow only the trusted boot stylesheet, not arbitrary inline CSS.
+          const critical = /<style>([\s\S]*?)<\/style>/u.exec(data.toString("utf8"))?.[1];
+          if (critical) {
+            const hash = createHash("sha256").update(critical.replace(/\r\n?/gu, "\n")).digest("base64");
+            res.setHeader("Content-Security-Policy",
+              res.getHeader("Content-Security-Policy") + `; style-src 'self' 'sha256-${hash}'`);
+          }
+        }
         res.writeHead(200, { "Content-Type": asset[1] + "; charset=utf-8" });
         return res.end(data);
       }
