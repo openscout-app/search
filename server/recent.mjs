@@ -59,7 +59,8 @@ function stableId(value, length = 16) {
   return createHash("sha256").update(value).digest("hex").slice(0, length);
 }
 
-function isTranscriptFile(harness, name) {
+function isTranscriptFile(harness, name, brain) {
+  if (brain) return name === "transcript.jsonl";
   return harness === "kimi" ? name === "wire.jsonl" : name.endsWith(".jsonl");
 }
 
@@ -71,13 +72,16 @@ function sessionRoots(harness) {
     { harness: "codex", root: join(home, ".openai-codex", "sessions") },
     { harness: "claude", root: process.env.OPENSCOUT_TAIL_CLAUDE_PROJECTS_ROOT ?? join(home, ".claude", "projects") },
     { harness: "kimi", root: process.env.OPENSCOUT_TAIL_KIMI_SESSIONS_ROOT ?? join(kimiHome, "sessions") },
+    { harness: "antigravity", root: join(home, ".gemini", "antigravity", "conversations") },
+    { harness: "antigravity", brain: true,
+      root: process.env.OPENSCOUT_TAIL_ANTIGRAVITY_BRAIN_ROOT ?? join(home, ".gemini", "antigravity-cli", "brain") },
   ];
   return roots.filter((entry) => existsSync(entry.root) && (!harness || entry.harness === harness));
 }
 
 async function discoverFiles(cutoffMs, harness, signal) {
   const files = [];
-  for (const { harness: name, root } of sessionRoots(harness)) {
+  for (const { harness: name, root, brain } of sessionRoots(harness)) {
     const stack = [root];
     const visited = new Set();
     while (stack.length) {
@@ -102,10 +106,17 @@ async function discoverFiles(cutoffMs, harness, signal) {
         signal?.throwIfAborted();
         const path = join(directory, entry.name);
         if (entry.isDirectory()) {
+          if (brain) {
+            const parts = relative(root, path).split(sep);
+            if (parts.length > 3 || (parts.length > 1 && parts[1] !== ".system_generated")
+              || (parts.length === 3 && parts[2] !== "logs")) continue;
+          }
           stack.push(path);
           continue;
         }
-        if (!isTranscriptFile(name, entry.name)) continue;
+        if (!isTranscriptFile(name, entry.name, brain)) continue;
+        const parts = brain ? relative(root, path).split(sep) : null;
+        if (parts && (parts.length !== 4 || parts[1] !== ".system_generated" || parts[2] !== "logs")) continue;
         let file;
         try {
           file = await stat(path);
@@ -116,8 +127,8 @@ async function discoverFiles(cutoffMs, harness, signal) {
           stack.push(path);
           continue;
         }
-        if (file.mtimeMs < cutoffMs) continue;
-        files.push({ harness: name, path, mtimeMs: file.mtimeMs, size: file.size });
+        if (!file.isFile() || file.mtimeMs < cutoffMs) continue;
+        files.push({ harness: name, path, mtimeMs: file.mtimeMs, size: file.size, sessionId: parts?.[0] });
       }
     }
   }
@@ -154,7 +165,10 @@ function recordText(raw, harness) {
   }
   const object = recordValue(value);
   if (!object) return null;
-  const text = harness === "claude" ? claudeText(object) : harness === "kimi" ? kimiText(object) : codexText(object);
+  const text = harness === "claude" ? claudeText(object)
+    : harness === "kimi" ? kimiText(object)
+    : harness === "antigravity" ? antigravityText(object)
+    : codexText(object);
   return text && text.trim() ? text : null;
 }
 
@@ -220,6 +234,13 @@ function kimiText(object) {
   return null;
 }
 
+function antigravityText(object) {
+  if (object.type === "USER_INPUT" || object.type === "PLANNER_RESPONSE") {
+    return flatten(object.content);
+  }
+  return null;
+}
+
 function inferCwd(record) {
   const meta = recordValue(record);
   const cwd = stringValue(meta?.cwd) ?? stringValue(meta?.workDir);
@@ -259,7 +280,8 @@ function scanSnippet(text, terms) {
 async function transcriptHead(file) {
   const kimiAgent = basename(dirname(file.path));
   const kimiSession = basename(dirname(dirname(dirname(file.path))));
-  let sessionId = file.harness === "kimi" ? (kimiAgent === "main" ? kimiSession : `${kimiSession}:${kimiAgent}`) : null;
+  let sessionId = file.sessionId ?? (file.harness === "kimi"
+    ? (kimiAgent === "main" ? kimiSession : `${kimiSession}:${kimiAgent}`) : null);
   let cwd = null;
   let head = "";
   try {
@@ -487,7 +509,7 @@ export async function scanRecent({ q, hours, harness, limit = 30, cursor, signal
     signal?.throwIfAborted();
     const head = await transcriptHead(file);
     const sessionId = head.sessionId ?? basename(file.path).replace(/\.jsonl$/u, "");
-    const project = projectName(head.cwd, file.path);
+    const project = file.sessionId && !head.cwd ? sessionId : projectName(head.cwd, file.path);
     const dir = `sessions/${file.harness}/${sessionId.replace(/[^A-Za-z0-9_.-]+/gu, "-").slice(0, 80)}-${stableId(file.path, 10)}`;
     const when = new Date(file.mtimeMs).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
     for (const match of entry.matches) {

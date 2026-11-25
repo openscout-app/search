@@ -1,4 +1,4 @@
-import type { ReactElement } from "react";
+import type { ReactElement, ReactNode } from "react";
 import type { CoverageCopyOptions, SearchCoverage } from "./coverage.js";
 import type { PassageGroup } from "./passages.jsx";
 
@@ -28,6 +28,7 @@ export type SearchSurfaceProps = {
   error?: string | null;
   /** One line under the scope controls, about the source itself. */
   note?: string | null;
+  masthead?: ReactNode;
   groups: readonly PassageGroup[];
   selectedId?: string | null;
   coverage?: SearchCoverage | null;
