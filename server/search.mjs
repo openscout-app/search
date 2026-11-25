@@ -120,6 +120,8 @@ function presentHit(hit) {
     harness: ref?.harness ?? hit.facets.harness, project: hit.facets.project,
     session: ref?.sessionId ?? hit.facets.sessionId ?? null, source,
     records: ref?.recordRange ?? null, updatedAt: ref?.anchor?.mtimeMs ?? null,
+    ...(hit.facets?.sessionTitle ? { sessionTitle: hit.facets.sessionTitle } : {}),
+    ...(hit.facets?.role ? { role: hit.facets.role } : {}),
   };
 }
 

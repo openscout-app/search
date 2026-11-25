@@ -1,4 +1,7 @@
+# OpenScout local state
+.openscout/
+
+# Local dependencies
 node_modules/
 *.tgz
 .DS_Store
-dist/

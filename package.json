@@ -1,8 +1,9 @@
 {
   "name": "@openscout/search",
-  "version": "0.1.0",
-  "description": "Find the session where your coding agents discussed a change, ran a command, or made a decision.",
+  "version": "0.2.0",
+  "description": "Find the session where your coding agents discussed a change, ran a command, or made a decision. Prebuilt HTML served on loopback and backed by the Scout CLI.",
   "license": "Apache-2.0",
+  "homepage": "https://openscout.app/search",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/openscout-app/search.git"
@@ -33,9 +34,8 @@
   },
   "files": [
     "bin",
-    "server",
+    "server/*.mjs",
     "shared",
-    "public",
     "dist",
     "ui",
     "docs/search.png",
@@ -43,20 +43,13 @@
     "README.md"
   ],
   "engines": {
-    "node": ">=20"
+    "node": ">=20.11"
   },
   "scripts": {
-    "build": "node scripts/build-client.mjs",
-    "prepare": "npm run build",
+    "dev": "vite",
+    "build": "vite build",
     "start": "node bin/scout-search.mjs",
     "test": "node --test test/*.test.mjs"
-  },
-  "devDependencies": {
-    "esbuild": "0.25.12",
-    "hudsonkit": "0.3.5",
-    "lucide-react": "0.574.0",
-    "react": "19.2.3",
-    "react-dom": "19.2.3"
   },
   "peerDependencies": {
     "react": "^19.0.0"
@@ -67,6 +60,12 @@
     }
   },
   "dependencies": {
-    "@openscout/scout": "0.5.3"
+    "@openscout/scout": "^0.5.4"
+  },
+  "devDependencies": {
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "scout-app": "github:openscout-app/scout-app#b4d8686",
+    "vite": "^7.0.0"
   }
 }
