@@ -50,9 +50,29 @@ function oneLineInput(input) {
 
 // Harness scaffolding is not what a person remembers reading.
 function stripHarnessBoilerplate(text) {
-  return text
-    .replace(/<(recommended_plugins|local-command-caveat|system-reminder|system_reminder)\b[^>]*>[\s\S]*?(?:<\/\1\s*>|$)/giu, "")
+  const userReq = /<USER_REQUEST>\s*([\s\S]*?)\s*<\/USER_REQUEST>/iu.exec(text);
+  const picked = userReq ? userReq[1] : text;
+  return picked
+    .replace(/<(recommended_plugins|local-command-caveat|system-reminder|system_reminder|ADDITIONAL_METADATA|CONTEXT_SUMMARY|SYSTEM_MESSAGE|INSTRUCTIONS|environment_context|command-name|command-message|command-args)\b[^>]*>[\s\S]*?(?:<\/\1\s*>|$)/giu, "")
+    .replace(/<\/?pasted_content\b[^>]*>/giu, "")
+    .replace(/<truncated \d+ (?:bytes|lines)>/giu, "")
     .trim();
+}
+
+function cleanHumanSessionTitle(raw) {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  if (/^# AGENTS\.md instructions\b/iu.test(trimmed)) return null;
+  if (/^The following is a <SYSTEM_MESSAGE>/iu.test(trimmed)) return null;
+  if (/<command-name>\s*\/(?:clear|compact|login|logout|status|help)\s*<\/command-name>/iu.test(trimmed)) return null;
+  const cleaned = stripHarnessBoilerplate(trimmed)
+    .replace(/^New (?:broker|runtime) ask from [^\n]+?\.\s*(?:Task:\s*)?/iu, "")
+    .replace(/^#+\s*/u, "")
+    .replace(/\*\*([^*]+)\*\*/gu, "$1")
+    .replace(/`([^`]+)`/gu, "$1")
+    .replace(/\s+/gu, " ")
+    .trim();
+  return cleaned.length >= 3 ? trimOneLine(cleaned, 110) : null;
 }
 
 function stableId(value, length = 16) {
@@ -156,7 +176,7 @@ function findRipgrep() {
 
 // Only human turns, tool calls and tool results carry a passage. Session
 // metadata, system records and reasoning summaries are skipped.
-function recordText(raw, harness) {
+function recordEntry(raw, harness) {
   let value;
   try {
     value = JSON.parse(raw);
@@ -165,78 +185,98 @@ function recordText(raw, harness) {
   }
   const object = recordValue(value);
   if (!object) return null;
-  const text = harness === "claude" ? claudeText(object)
-    : harness === "kimi" ? kimiText(object)
-    : harness === "antigravity" ? antigravityText(object)
-    : codexText(object);
-  return text && text.trim() ? text : null;
+  const entry = harness === "claude" ? claudeEntry(object)
+    : harness === "kimi" ? kimiEntry(object)
+    : harness === "antigravity" ? antigravityEntry(object)
+    : codexEntry(object);
+  return entry && entry.text && entry.text.trim() ? entry : null;
 }
 
-function codexText(object) {
+function codexEntry(object) {
   const type = String(object.type ?? "");
   if (type === "session_meta" || type === "turn_context") return null;
   if (type === "event_msg") {
     const payload = recordValue(object.payload) ?? {};
-    if (payload.type === "user_message") return String(payload.message ?? payload.text ?? "");
-    if (payload.type === "agent_message") return String(payload.message ?? payload.text ?? "");
+    if (payload.type === "user_message") return { role: "prompt", text: String(payload.message ?? payload.text ?? "") };
+    if (payload.type === "agent_message") return { role: "reply", text: String(payload.message ?? payload.text ?? "") };
     return null;
   }
   if (type === "response_item" || type === "message" || type === "reasoning" || type === "function_call" ||
     type === "local_shell_call" || type === "function_call_output" || type === "local_shell_call_output") {
-    return codexPayloadText(recordValue(object.payload) ?? object, type);
+    return codexPayloadEntry(recordValue(object.payload) ?? object, type);
   }
   return null;
 }
 
-function codexPayloadText(payload, fallback) {
+function codexPayloadEntry(payload, fallback) {
   const type = String(payload.type ?? "") || fallback;
-  if (type === "message") return flatten(payload.content);
+  if (type === "message") {
+    const role = payload.role === "user" ? "prompt" : "reply";
+    return { role, text: flatten(payload.content) };
+  }
   if (type === "reasoning") {
-    if (Array.isArray(payload.summary)) return payload.summary.map((entry) => recordValue(entry)?.text).filter(Boolean).join(" ");
-    return stringValue(payload.content) ?? "";
+    const text = Array.isArray(payload.summary)
+      ? payload.summary.map((entry) => recordValue(entry)?.text).filter(Boolean).join(" ")
+      : (stringValue(payload.content) ?? "");
+    return { role: "reply", text };
   }
   if (type === "function_call" || type === "local_shell_call") {
-    return `name=${payload.name ?? payload.command ?? "tool"} input=${oneLineInput(payload.arguments ?? payload.args ?? payload.input ?? {})}`;
+    return { role: "tool", text: `name=${payload.name ?? payload.command ?? "tool"} input=${oneLineInput(payload.arguments ?? payload.args ?? payload.input ?? {})}` };
   }
   if (type === "function_call_output" || type === "local_shell_call_output") {
-    return trimOneLine(typeof payload.output === "string" ? payload.output : flatten(payload.output ?? payload.content), 180);
+    return { role: "tool", text: trimOneLine(typeof payload.output === "string" ? payload.output : flatten(payload.output ?? payload.content), 180) };
   }
   return null;
 }
 
-function claudeText(object) {
+function claudeEntry(object) {
   const type = String(object.type ?? "");
   const message = recordValue(object.message);
-  if (type === "user") return flatten(message?.content ?? object.content);
+  if (type === "user") return { role: "prompt", text: flatten(message?.content ?? object.content) };
   if (type === "assistant") {
     const content = message?.content ?? object.content;
     const tool = Array.isArray(content) ? content.map(recordValue).find((entry) => entry?.type === "tool_use") : null;
-    if (tool) return `name=${tool.name ?? "tool"} input=${oneLineInput(tool.input ?? {})}`;
-    return flatten(content);
+    if (tool) return { role: "tool", text: `name=${tool.name ?? "tool"} input=${oneLineInput(tool.input ?? {})}` };
+    return { role: "reply", text: flatten(content) };
   }
-  if (type === "tool_use") return `name=${object.name ?? "tool"} input=${oneLineInput(object.input ?? {})}`;
-  if (type === "tool_result") return trimOneLine(typeof object.content === "string" ? object.content : flatten(object.content), 180);
+  if (type === "tool_use") return { role: "tool", text: `name=${object.name ?? "tool"} input=${oneLineInput(object.input ?? {})}` };
+  if (type === "tool_result") return { role: "tool", text: trimOneLine(typeof object.content === "string" ? object.content : flatten(object.content), 180) };
   return null;
 }
 
-function kimiText(object) {
+function kimiEntry(object) {
   const type = String(object.type ?? "");
-  if (type === "turn.prompt" || type === "turn.steer") return flatten(object.input ?? object.content);
-  if (type === "context.append_message") return flatten(recordValue(object.message)?.content);
+  if (type === "turn.prompt" || type === "turn.steer") return { role: "prompt", text: flatten(object.input ?? object.content) };
+  if (type === "context.append_message") {
+    const msg = recordValue(object.message);
+    return { role: msg?.role === "user" ? "prompt" : "reply", text: flatten(msg?.content) };
+  }
   if (type !== "context.append_loop_event") return null;
   const event = recordValue(object.event) ?? {};
-  if (event.type === "tool.call") return `name=${event.name ?? "tool"} input=${oneLineInput(event.args ?? event.input ?? {})}`;
+  if (event.type === "tool.call") return { role: "tool", text: `name=${event.name ?? "tool"} input=${oneLineInput(event.args ?? event.input ?? {})}` };
   if (event.type === "tool.result") {
     const result = recordValue(event.result) ?? {};
-    return trimOneLine(typeof result.output === "string" ? result.output : flatten(result.output ?? result.content ?? event.result), 180);
+    return { role: "tool", text: trimOneLine(typeof result.output === "string" ? result.output : flatten(result.output ?? result.content ?? event.result), 180) };
   }
-  if (event.type === "content.part" && event.part?.type === "text") return String(event.part.text ?? "");
+  if (event.type === "content.part" && event.part?.type === "text") return { role: "reply", text: String(event.part.text ?? "") };
   return null;
 }
 
-function antigravityText(object) {
-  if (object.type === "USER_INPUT" || object.type === "PLANNER_RESPONSE") {
-    return flatten(object.content);
+function antigravityEntry(object) {
+  const step = recordValue(object.step) ?? object;
+  const type = String(step.type ?? "");
+  if (type === "USER_INPUT" || type.endsWith("_USER_INPUT")) {
+    return { role: "prompt", text: String(step.userInput?.userResponse ?? flatten(step.content)) };
+  }
+  if (type === "PLANNER_RESPONSE" || type.endsWith("_PLANNER_RESPONSE")) {
+    const pr = recordValue(step.plannerResponse);
+    if (pr) {
+      const reply = stringValue(pr.modifiedResponse) ?? stringValue(pr.response);
+      if (reply) return { role: "reply", text: reply };
+      const call = Array.isArray(pr.toolCalls) ? recordValue(pr.toolCalls[0]) : null;
+      if (call) return { role: "tool", text: `name=${call.name ?? "tool"} input=${oneLineInput(call.argumentsJson ?? call.arguments ?? {})}` };
+    }
+    return { role: "reply", text: flatten(step.content) };
   }
   return null;
 }
@@ -277,12 +317,41 @@ function scanSnippet(text, terms) {
   return `${start > 0 ? "..." : ""}${compact.slice(start, end)}${end < compact.length ? "..." : ""}`;
 }
 
+function sniffAntigravityWorkspace(object) {
+  const step = recordValue(object.step) ?? object;
+  const ws = step?.userInput?.activeUserState?.activeDocument?.workspaceUri;
+  if (typeof ws === "string" && ws.startsWith("file://")) {
+    return decodeURIComponent(ws.slice("file://".length));
+  }
+  const text = typeof step?.content === "string" ? step.content : String(step?.userInput?.userResponse ?? "");
+  const active = /Active Workspaces:\s*\n\s*-\s*([^\r\n<]+)/iu.exec(text);
+  if (active?.[1]?.trim()) return active[1].trim();
+  const cwd = /Command Working Directory:\s*([^\r\n<]+)/iu.exec(text);
+  if (cwd?.[1]?.trim()) return cwd[1].trim();
+  const calls = step?.plannerResponse?.toolCalls || step?.tool_calls || [];
+  if (Array.isArray(calls)) {
+    for (const call of calls) {
+      let args = call?.args || call?.arguments || {};
+      if (typeof call?.argumentsJson === "string") {
+        try { args = JSON.parse(call.argumentsJson); } catch {}
+      }
+      const p = args?.Path || args?.TargetFile;
+      if (typeof p === "string") {
+        const devMatch = /^(\/(?:Users|home)\/[^/]+\/dev\/[^/]+)/u.exec(p);
+        if (devMatch?.[1]) return devMatch[1];
+      }
+    }
+  }
+  return null;
+}
+
 async function transcriptHead(file) {
   const kimiAgent = basename(dirname(file.path));
   const kimiSession = basename(dirname(dirname(dirname(file.path))));
   let sessionId = file.sessionId ?? (file.harness === "kimi"
     ? (kimiAgent === "main" ? kimiSession : `${kimiSession}:${kimiAgent}`) : null);
   let cwd = null;
+  let sessionTitle = null;
   let head = "";
   try {
     const handle = await open(file.path, "r");
@@ -294,24 +363,30 @@ async function transcriptHead(file) {
       await handle.close();
     }
   } catch {
-    return { cwd, sessionId };
+    return { cwd, sessionId, sessionTitle };
   }
   for (const line of head.split("\n").slice(0, -1)) {
-    if (cwd && sessionId) break;
+    if (cwd && sessionId && sessionTitle) break;
     if (!line.trim()) continue;
     try {
       const value = JSON.parse(line);
       const object = recordValue(value);
       if (!object) continue;
-      cwd ??= inferCwd(object.meta ?? object.payload ?? object);
+      cwd ??= inferCwd(object.meta ?? object.payload ?? object) ?? (file.harness === "antigravity" ? sniffAntigravityWorkspace(object) : null);
       sessionId ??= file.harness === "claude"
         ? stringValue(object.sessionId) ?? stringValue(object.session_id)
         : stringValue(object.payload?.id) ?? stringValue(object.id) ?? stringValue(object.meta?.sessionId);
+      if (!sessionTitle) {
+        const entry = recordEntry(line, file.harness);
+        if (entry?.role === "prompt") {
+          sessionTitle = cleanHumanSessionTitle(entry.text);
+        }
+      }
     } catch {
       // A partial head line contributes nothing.
     }
   }
-  return { cwd, sessionId };
+  return { cwd, sessionId, sessionTitle };
 }
 
 function readRipgrepBatch(rg, paths, needle, signal, onLine, shouldStop) {
@@ -452,9 +527,9 @@ export async function scanRecent({ q, hours, harness, limit = 30, cursor, signal
       }
       current = path;
     }
-    const text = recordText(raw, file.harness);
-    if (!text) return;
-    const body = stripHarnessBoilerplate(text);
+    const parsedEntry = recordEntry(raw, file.harness);
+    if (!parsedEntry) return;
+    const body = stripHarnessBoilerplate(parsedEntry.text);
     const haystack = body.toLowerCase();
     if (!terms.every((term) => haystack.includes(term))) return;
     const snippet = scanSnippet(body, terms);
@@ -470,6 +545,7 @@ export async function scanRecent({ q, hours, harness, limit = 30, cursor, signal
     if (earlier) {
       earlier.text = body;
       earlier.snippet = snippet;
+      earlier.role = parsedEntry.role;
       earlier.index = lineNo - 1;
       earlier.byte = byte;
       earlier.bytes = Buffer.byteLength(raw, "utf8");
@@ -479,6 +555,7 @@ export async function scanRecent({ q, hours, harness, limit = 30, cursor, signal
     const match = {
       text: body,
       snippet,
+      role: parsedEntry.role,
       index: lineNo - 1,
       byte,
       bytes: Buffer.byteLength(raw, "utf8"),
@@ -541,6 +618,8 @@ export async function scanRecent({ q, hours, harness, limit = 30, cursor, signal
           harness: file.harness,
           project,
           ...(head.cwd ? { projectPath: head.cwd } : {}),
+          ...(head.sessionTitle ? { sessionTitle: head.sessionTitle } : {}),
+          ...(match.role ? { role: match.role } : {}),
           source: "sessions",
           transcriptPath: file.path,
           sessionId,

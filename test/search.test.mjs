@@ -110,23 +110,41 @@ test("accepts only local API traffic and bounded queries", async () => {
   assert.match(await (await fetch(url)).text(), /Scout Search/);
 });
 
-test("serves the built Search controls and theme from the same local origin", async () => {
+test("serves the built Search controls, boot skeleton, and full session drill-down from the same local origin", async () => {
   const page = await fetch(url);
+  assert.equal(page.status, 200);
   const html = await page.text();
-  assert.match(html, /<div id="root">\s*<div data-scout-boot="search">[\s\S]*Scout Search[\s\S]*Recent transcripts/u);
-  const critical = /<style>([\s\S]*?)<\/style>/u.exec(html)[1];
-  const hash = createHash("sha256").update(critical).digest("base64");
-  assert.ok(page.headers.get("content-security-policy").includes(`style-src 'self' 'sha256-${hash}'`));
-  for (const [path, mime, marker] of [
-    ["/app.js", "text/javascript", "Copy reference"],
-    ["/app.css", "text/css", "--hud-ink"],
+  assert.match(html, /data-scout-boot="search"/u);
+  assert.match(html, /Scout Search/u);
+  const jsAsset = /src="(\/assets\/[^"]+\.js)"/u.exec(html)?.[1];
+  const cssAsset = /href="(\/assets\/[^"]+\.css)"/u.exec(html)?.[1];
+  assert.ok(jsAsset, "built JS bundle linked in index.html");
+  assert.ok(cssAsset, "built CSS bundle linked in index.html");
+  for (const [assetPath, mime, marker] of [
+    [jsAsset, "text/javascript", "Copy reference"],
+    [cssAsset, "text/css", "--scout-thin-bg"],
   ]) {
-    assert.ok(html.includes(path));
-    const asset = await fetch(url + path);
+    const asset = await fetch(url + assetPath);
     assert.equal(asset.status, 200);
     assert.ok(asset.headers.get("content-type").startsWith(mime));
     assert.ok((await asset.text()).includes(marker));
   }
+
+  const refRes = await fetch(url + "/api/session-ref/fixture-session");
+  assert.equal(refRes.status, 200);
+  const refData = await refRes.json();
+  assert.equal(refData.observe.project, "atlas");
+  assert.equal(refData.observe.data.events.length, 1);
+
+  const ctxRes = await fetch(url + "/api/session-context", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ sessionId: "fixture-session", centerRecord: 1, radius: 1 }),
+  });
+  assert.equal(ctxRes.status, 200);
+  const ctxData = await ctxRes.json();
+  assert.equal(ctxData.project, "atlas");
+  assert.ok(ctxData.turns.some((turn) => turn.text.includes("checkpoint")));
 });
 
 test("a window search pages through every transcript in the window", async () => {
